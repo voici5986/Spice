@@ -60,10 +60,16 @@ Each weighted dimension must be emitted by the active policy or domain adapter t
 
 ```md
 Preferences:
-- outcome_value: 0.40
-- risk_reduction: 0.25
-- reversibility: 0.20
-- confidence_alignment: 0.15
+- outcome_value: 0.20
+- risk_reduction: 0.15
+- reversibility: 0.05
+- confidence_alignment: 0.10
+- urgency_alignment: 0.15
+- effort_fit: 0.10
+- impact_potential: 0.10
+- historical_outcome_alignment: 0.03
+- execution_intent_fit: 0.10
+- preference_alignment: 0.02
 ```
 
 Scoring dimension descriptions:
@@ -80,6 +86,26 @@ reversibility:
 
 confidence_alignment:
   Measures whether the candidate's confidence is appropriate for its risk.
+
+urgency_alignment:
+  Measures whether the candidate targets urgent active work or intent.
+
+effort_fit:
+  Measures whether the candidate can be completed with bounded time cost.
+
+impact_potential:
+  Measures whether the candidate is likely to move meaningful state forward.
+
+historical_outcome_alignment:
+  Measures whether similar past actions produced successful outcomes.
+
+execution_intent_fit:
+  Measures whether the candidate matches the current interaction mode. In `/act`,
+  approval-eligible executable candidates should be preferred over planning-only
+  candidates unless blocked by hard constraints.
+
+preference_alignment:
+  Measures how well the candidate aligns with the declared weighted preferences.
 ```
 
 ## Hard Constraints
@@ -92,6 +118,9 @@ Hard constraints require matching policy or domain adapter checks.
 Hard Constraints:
 - id: no_declared_veto_violation
   rule: do not select a candidate that fails a declared veto check from the active policy or domain adapter
+  severity: veto
+- id: selection_pool_eligible
+  rule: when runtime mode restricts the selection pool, do not select candidates outside that pool
   severity: veto
 ```
 
@@ -118,6 +147,9 @@ Decision Principles:
 - prefer reversible actions under uncertainty
 - prefer explicit uncertainty over hidden assumptions
 - avoid irreversible choices when confidence is low
+- when the user uses `/act`, prefer the safest approval-gated executable next
+  action for concrete bounded work; use planning or clarification only when
+  execution is blocked, ambiguous, or missing required details
 ```
 
 ## Trade-off Rules

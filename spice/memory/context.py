@@ -31,6 +31,8 @@ class CompiledContextBase:
 
 @dataclass(slots=True)
 class DecisionContext(CompiledContextBase):
+    current_intent: dict[str, Any] = field(default_factory=dict)
+    active_decision_frame: dict[str, Any] = field(default_factory=dict)
     objectives: list[dict[str, Any]] = field(default_factory=list)
     constraints: list[dict[str, Any]] = field(default_factory=list)
     entities: dict[str, Any] = field(default_factory=dict)
@@ -38,7 +40,12 @@ class DecisionContext(CompiledContextBase):
     risks: list[dict[str, Any]] = field(default_factory=list)
     resources: dict[str, Any] = field(default_factory=dict)
     active_intents: list[dict[str, Any]] = field(default_factory=list)
+    recent_decisions: list[dict[str, Any]] = field(default_factory=list)
+    recent_approvals: list[dict[str, Any]] = field(default_factory=list)
     recent_outcomes: list[dict[str, Any]] = field(default_factory=list)
+    executor_affordance: dict[str, Any] = field(default_factory=dict)
+    session_summary: dict[str, Any] = field(default_factory=dict)
+    workspace_context: dict[str, Any] = field(default_factory=dict)
     retrieved_memory: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
@@ -60,9 +67,16 @@ class DecisionContext(CompiledContextBase):
 
 @dataclass(slots=True)
 class SimulationContext(CompiledContextBase):
+    current_intent: dict[str, Any] = field(default_factory=dict)
+    active_decision_frame: dict[str, Any] = field(default_factory=dict)
     decision_context_ref: str | None = None
     candidate_decisions: list[dict[str, Any]] = field(default_factory=list)
     candidate_intents: list[dict[str, Any]] = field(default_factory=list)
+    recent_decisions: list[dict[str, Any]] = field(default_factory=list)
+    recent_approvals: list[dict[str, Any]] = field(default_factory=list)
+    executor_affordance: dict[str, Any] = field(default_factory=dict)
+    session_summary: dict[str, Any] = field(default_factory=dict)
+    workspace_context: dict[str, Any] = field(default_factory=dict)
     assumptions: list[dict[str, Any]] = field(default_factory=list)
     evaluation_axes: list[dict[str, Any]] = field(default_factory=list)
     historical_analogs: list[dict[str, Any]] = field(default_factory=list)
@@ -87,6 +101,13 @@ class SimulationContext(CompiledContextBase):
 
 @dataclass(slots=True)
 class ReflectionContext(CompiledContextBase):
+    current_intent: dict[str, Any] = field(default_factory=dict)
+    active_decision_frame: dict[str, Any] = field(default_factory=dict)
+    recent_decisions: list[dict[str, Any]] = field(default_factory=list)
+    recent_approvals: list[dict[str, Any]] = field(default_factory=list)
+    executor_affordance: dict[str, Any] = field(default_factory=dict)
+    session_summary: dict[str, Any] = field(default_factory=dict)
+    workspace_context: dict[str, Any] = field(default_factory=dict)
     executed_path: dict[str, Any] = field(default_factory=dict)
     expected_vs_actual: dict[str, Any] = field(default_factory=dict)
     impact_summary: dict[str, Any] = field(default_factory=dict)

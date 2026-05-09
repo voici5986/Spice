@@ -25,6 +25,34 @@ class InitDomainAssistTests(unittest.TestCase):
         self.assertEqual(override.provider_id, "openrouter")
         self.assertEqual(override.model_id, "openai/gpt-4o-mini")
 
+    def test_assist_model_override_supports_openai_prefix(self) -> None:
+        override = _resolve_assist_model_override("openai:gpt-4o-mini")
+        self.assertIsNotNone(override)
+        assert override is not None
+        self.assertEqual(override.provider_id, "openai")
+        self.assertEqual(override.model_id, "gpt-4o-mini")
+
+    def test_assist_model_override_supports_anthropic_prefix(self) -> None:
+        override = _resolve_assist_model_override("anthropic:claude-3-5-sonnet-latest")
+        self.assertIsNotNone(override)
+        assert override is not None
+        self.assertEqual(override.provider_id, "anthropic")
+        self.assertEqual(override.model_id, "claude-3-5-sonnet-latest")
+
+    def test_assist_model_override_supports_deepseek_prefix(self) -> None:
+        override = _resolve_assist_model_override("deepseek:deepseek-chat")
+        self.assertIsNotNone(override)
+        assert override is not None
+        self.assertEqual(override.provider_id, "deepseek")
+        self.assertEqual(override.model_id, "deepseek-chat")
+
+    def test_assist_model_override_supports_mimo_prefix(self) -> None:
+        override = _resolve_assist_model_override("mimo:mimo-v2.5-pro")
+        self.assertIsNotNone(override)
+        assert override is not None
+        self.assertEqual(override.provider_id, "mimo")
+        self.assertEqual(override.model_id, "mimo-v2.5-pro")
+
     def test_assist_rejects_from_spec_combination(self) -> None:
         with tempfile.TemporaryDirectory(dir=REPO_ROOT) as tmp_dir:
             output_dir = Path(tmp_dir) / "assist_from_spec_forbidden"

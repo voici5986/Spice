@@ -19,7 +19,11 @@ from spice.llm.core import (
     ProviderRegistry,
 )
 from spice.llm.providers import (
+    AnthropicLLMProvider,
+    DeepSeekLLMProvider,
     DeterministicLLMProvider,
+    MiMoLLMProvider,
+    OpenAILLMProvider,
     OpenRouterLLMProvider,
     SubprocessLLMProvider,
 )
@@ -264,7 +268,11 @@ def write_assist_artifacts(
 def _build_assist_registry() -> ProviderRegistry:
     return (
         ProviderRegistry.empty()
+        .register(AnthropicLLMProvider())
+        .register(DeepSeekLLMProvider())
         .register(DeterministicLLMProvider())
+        .register(MiMoLLMProvider())
+        .register(OpenAILLMProvider())
         .register(OpenRouterLLMProvider())
         .register(SubprocessLLMProvider())
     )

@@ -72,6 +72,61 @@ class ContextCompiler(ABC):
     ) -> ReflectionContext:
         """Compile context for post-execution reflection."""
 
+    def compile_general_decision_context(
+        self,
+        state: WorldState,
+        general_state: Any,
+        *,
+        current_intent: str | dict[str, Any] = "",
+        active_decision_frame: dict[str, Any] | None = None,
+        session: dict[str, Any] | None = None,
+        config: dict[str, Any] | None = None,
+        recent_history: list[ProtocolRecord] | None = None,
+        domain: str = "general",
+    ) -> DecisionContext:
+        """Compile decision context for the general decision runtime."""
+        raise NotImplementedError(
+            "This ContextCompiler does not support the general decision runtime."
+        )
+
+    def compile_general_simulation_context(
+        self,
+        state: WorldState,
+        general_state: Any,
+        *,
+        current_intent: str | dict[str, Any] = "",
+        candidates: list[Any] | None = None,
+        active_decision_frame: dict[str, Any] | None = None,
+        session: dict[str, Any] | None = None,
+        config: dict[str, Any] | None = None,
+        recent_history: list[ProtocolRecord] | None = None,
+        domain: str = "general",
+    ) -> SimulationContext:
+        """Compile simulation context for general runtime candidate evaluation."""
+        raise NotImplementedError(
+            "This ContextCompiler does not support the general decision runtime."
+        )
+
+    def compile_general_reflection_context(
+        self,
+        state: WorldState,
+        general_state: Any,
+        outcome: Outcome | dict[str, Any],
+        *,
+        current_intent: str | dict[str, Any] = "",
+        decision_artifact: dict[str, Any] | None = None,
+        execution_artifact: dict[str, Any] | None = None,
+        active_decision_frame: dict[str, Any] | None = None,
+        session: dict[str, Any] | None = None,
+        config: dict[str, Any] | None = None,
+        recent_history: list[ProtocolRecord] | None = None,
+        domain: str = "general",
+    ) -> ReflectionContext:
+        """Compile reflection context from general runtime execution artifacts."""
+        raise NotImplementedError(
+            "This ContextCompiler does not support the general decision runtime."
+        )
+
     @abstractmethod
     def write_reflection(
         self,

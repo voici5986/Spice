@@ -9,3 +9,4 @@ class LLMTaskHook(str, Enum):
     DECISION_PROPOSE = "decision_propose"
     SIMULATION_ADVISE = "simulation_advise"
     REFLECTION_SYNTHESIZE = "reflection_synthesize"
+    SESSION_SUMMARIZE = "session_summarize"

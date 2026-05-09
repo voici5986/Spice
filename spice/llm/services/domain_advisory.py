@@ -29,7 +29,11 @@ from spice.llm.core import (
     ProviderRegistry,
 )
 from spice.llm.providers import (
+    AnthropicLLMProvider,
+    DeepSeekLLMProvider,
     DeterministicLLMProvider,
+    MiMoLLMProvider,
+    OpenAILLMProvider,
     OpenRouterLLMProvider,
     SubprocessLLMProvider,
 )
@@ -298,7 +302,11 @@ def _build_domain_llm_client(*, allowed_actions: tuple[str, ...]) -> LLMClient:
     )
     registry = (
         ProviderRegistry.empty()
+        .register(AnthropicLLMProvider())
+        .register(DeepSeekLLMProvider())
+        .register(MiMoLLMProvider())
         .register(stub_provider)
+        .register(OpenAILLMProvider())
         .register(OpenRouterLLMProvider())
         .register(SubprocessLLMProvider())
     )

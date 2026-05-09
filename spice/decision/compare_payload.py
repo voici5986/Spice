@@ -28,6 +28,11 @@ _DIMENSION_LABELS = {
     "time_efficiency": "Time Efficiency",
     "attention_preservation": "Attention Preservation",
     "confidence_alignment": "Confidence Alignment",
+    "urgency_alignment": "Urgency Alignment",
+    "effort_fit": "Effort Fit",
+    "impact_potential": "Impact Potential",
+    "historical_outcome_alignment": "Historical Outcome Alignment",
+    "preference_alignment": "Preference Alignment",
 }
 
 
@@ -54,6 +59,7 @@ def normalize_compare_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     expected = payload.get("expected_outcome_or_risk", {})
     execution_boundary = payload.get("execution_boundary", {})
     outcome_return = payload.get("outcome_return", {})
+    warnings = payload.get("warnings", [])
 
     if not isinstance(summary, Mapping):
         raise ValueError("decision_relevant_state_summary must be an object")
@@ -69,6 +75,7 @@ def normalize_compare_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     normalized = {
         "decision_id": decision_id,
         "trace_ref": trace_ref,
+        "display_language": _string(payload.get("display_language")) or "en",
         "decision_relevant_state_summary": _normalize_state_summary(summary),
         "candidate_decisions": [_normalize_candidate(item) for item in candidates],
         "score_breakdown": _normalize_score_breakdown(score_breakdown),
@@ -77,6 +84,7 @@ def normalize_compare_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
         "expected_outcome_or_risk": _normalize_expected_effect(expected),
         "execution_boundary": _normalize_execution_boundary(execution_boundary),
         "outcome_return": _normalize_outcome_return(outcome_return),
+        "warnings": _normalize_warnings(warnings),
     }
     _validate_candidate_alignment(normalized)
     return normalized
@@ -606,11 +614,19 @@ def _normalize_candidate(value: Any) -> dict[str, Any]:
         "title": _string(item.get("title")),
         "action": _string(item.get("action")),
         "intent": _string(item.get("intent")),
+        "recommended_action": _string(item.get("recommended_action")),
+        "why_now": _string_list(item.get("why_now")),
+        "expected_result": _string(item.get("expected_result")),
+        "executor_task": _string(item.get("executor_task")),
+        "execution_affordance": _mapping(item.get("execution_affordance")),
+        "skill_resolution": _mapping(item.get("skill_resolution")),
         "enabled_reason": _string(item.get("enabled_reason")),
         "disabled_reason": _string(item.get("disabled_reason")),
         "requires_confirmation": bool(item.get("requires_confirmation", False)),
         "key_constraints": _string_list(item.get("key_constraints")),
         "expected_effect": _normalize_expected_effect(item.get("expected_effect", {})),
+        "simulation": _normalize_simulation(item.get("simulation", {})),
+        "history": _normalize_history(item.get("history", {})),
         "vetoes": [_mapping(entry) for entry in _list(item.get("vetoes"))],
         "tradeoff_rules": [_mapping(entry) for entry in _list(item.get("tradeoff_rules"))],
         "is_selected": bool(item.get("is_selected", False)),
@@ -658,6 +674,8 @@ def _normalize_selected_recommendation(value: Mapping[str, Any]) -> dict[str, An
         "human_summary": _string(value.get("human_summary")),
         "reason_summary": _string_list(value.get("reason_summary")),
         "requires_confirmation": bool(value.get("requires_confirmation", False)),
+        "execution_affordance": _mapping(value.get("execution_affordance")),
+        "skill_resolution": _mapping(value.get("skill_resolution")),
     }
 
 
@@ -683,6 +701,46 @@ def _normalize_expected_effect(value: Any) -> dict[str, Any]:
     }
 
 
+def _normalize_simulation(value: Any) -> dict[str, Any]:
+    item = _mapping(value)
+    if not item:
+        return {}
+    expected_outcome = _string(item.get("expected_outcome")) or _string(item.get("simulated_outcome"))
+    downside = _string(item.get("downside"))
+    if not downside:
+        downside = "; ".join(_string_list(item.get("likely_risks")))
+    return {
+        "candidate_id": _string(item.get("candidate_id")),
+        "expected_outcome": expected_outcome,
+        "downside": downside,
+        "success_signal": _string(item.get("success_signal")),
+        "time_fit": _string(item.get("time_fit")) or "unknown",
+        "simulated_outcome": expected_outcome,
+        "likely_benefits": _string_list(item.get("likely_benefits")),
+        "likely_risks": _string_list(item.get("likely_risks")),
+        "estimated_time_minutes": _number(item.get("estimated_time_minutes")),
+        "failure_modes": _string_list(item.get("failure_modes")),
+        "confidence": _number(item.get("confidence")),
+        "source": _string(item.get("source")),
+    }
+
+
+def _normalize_history(value: Any) -> dict[str, Any]:
+    item = _mapping(value)
+    if not item:
+        return {}
+    return {
+        "action_type": _string(item.get("action_type")),
+        "similar_outcome_count": int(_number(item.get("similar_outcome_count"))),
+        "success_count": int(_number(item.get("success_count"))),
+        "failure_count": int(_number(item.get("failure_count"))),
+        "partial_count": int(_number(item.get("partial_count"))),
+        "other_count": int(_number(item.get("other_count"))),
+        "historical_score": _number(item.get("historical_score")),
+        "recent_outcome_ids": _string_list(item.get("recent_outcome_ids")),
+    }
+
+
 def _normalize_execution_boundary(value: Any) -> dict[str, Any]:
     item = _mapping(value)
     return {
@@ -700,6 +758,29 @@ def _normalize_outcome_return(value: Any) -> dict[str, Any]:
         "observation_type": _string(item.get("observation_type")),
         "note": _string(item.get("note")),
     }
+
+
+def _normalize_warnings(value: Any) -> list[dict[str, str]]:
+    warnings: list[dict[str, str]] = []
+    for item in _list(value):
+        if isinstance(item, Mapping):
+            message = _string(item.get("message"))
+            reason = _string(item.get("reason"))
+            source = _string(item.get("source"))
+        else:
+            message = _string(item)
+            reason = ""
+            source = ""
+        if not message:
+            continue
+        warnings.append(
+            {
+                "source": source,
+                "message": message,
+                "reason": reason,
+            }
+        )
+    return warnings
 
 
 def _validate_candidate_alignment(payload: Mapping[str, Any]) -> None:

@@ -1,5 +1,29 @@
 # Decision Hub Demo
 
+Current flagship path:
+
+```sh
+python examples/decision_hub_demo/run_demo.py --general-full-loop --no-bars
+```
+
+This is the read-only General Decision Loop preview. It shows:
+
+```text
+signal -> state -> candidates -> decision -> approval
+-> skill resolution -> context pack -> SDEP handoff
+-> fixture outcome -> state feedback snapshot
+```
+
+It does not call an executor, send SDEP, persist state, or modify the legacy
+runtime. For the focused quickstart, see
+[`docs/general_loop_quickstart.md`](../../docs/general_loop_quickstart.md).
+
+To validate the same path locally:
+
+```sh
+python examples/decision_hub_demo/smoke_general_loop.py --quiet
+```
+
 This example demonstrates a minimal simulation-driven Spice decision loop while
 keeping the implementation out of Spice core.
 
@@ -19,6 +43,20 @@ Observation
 -> execution_result_observed
 -> WorldState reducer update
 ```
+
+The demo also exposes a General Core read-only path:
+
+```text
+provider/demo signal
+-> GenericObservation
+-> GeneralDecisionState
+-> GenericCandidate
+-> GenericPolicyAdapter
+-> human-readable Decision Card
+```
+
+This path is for showing the decision object before confirmation or execution.
+It does not call SDEP, Hermes, Codex, or the execution adapter.
 
 Boundary:
 
@@ -132,9 +170,100 @@ stays behind the SDEP wrapper, and outcomes return as `execution_result_observed
 Mock or direct Hermes executors are explicit test/debug overrides, not the
 public default.
 
-## Decision comparison artifact
+## General Decision Loop preview
 
-The demo can export a stable compare artifact from the real decision path:
+The General path is the first display layer for Spice's decision runtime. It
+shows the decision as a visible object, then previews how that decision would
+cross the approval and execution boundary.
+
+Start with the Decision Card:
+
+```sh
+python examples/decision_hub_demo/run_demo.py --general-decision-card --no-bars
+```
+
+This renders only the decision comparison: decision-relevant state, candidate
+decisions, selected recommendation, and why-not-others. It does not authorize,
+execute, or call SDEP.
+
+To inspect the approval checkpoint:
+
+```sh
+python examples/decision_hub_demo/run_demo.py --general-approval
+```
+
+This approval checkpoint is read-only. It does not store a confirmation, resolve
+a confirmation, create an `ExecutionIntent`, or call an executor.
+
+To inspect the planned execution handoff:
+
+```sh
+python examples/decision_hub_demo/run_demo.py --general-execution-plan
+```
+
+This command uses an in-memory confirmed approval fixture to render the planned
+SDEP handoff. It creates an `ExecutionIntent` and an SDEP `execute.request`
+payload for inspection only. It does not write confirmation state, send the
+request, call Hermes/Codex, receive an outcome, or update state.
+
+The next read-only step shows how a returned SDEP `execute.response` is
+attributed back to the same decision, candidate, approval, and execution id:
+
+```sh
+python examples/decision_hub_demo/run_demo.py --general-outcome-return
+```
+
+This command uses a local fixture response. It converts the response into a
+General `OutcomeRecord` and `GenericObservation(kind=outcome)` for inspection.
+It does not call an executor, process a live response, or update state.
+
+The final read-only step applies that outcome observation to a new General
+state snapshot:
+
+```sh
+python examples/decision_hub_demo/run_demo.py --general-state-feedback
+```
+
+This command uses the local fixture response and the General reducer to render
+the state feedback view. It does not persist state, call an executor, send SDEP,
+or modify the legacy demo runtime state.
+
+For the screenshot-friendly full preview, use the flagship read-only General
+loop:
+
+```sh
+python examples/decision_hub_demo/run_demo.py --general-full-loop --no-bars
+```
+
+This prints the complete read-only chain:
+
+```text
+signal -> state -> candidates -> decision -> approval
+-> skill resolution -> context pack -> SDEP handoff
+-> fixture response -> outcome -> state feedback snapshot
+```
+
+In this path, a skill is an execution template / capability hint, the context
+pack is compressed execution context, and SDEP remains the protocol boundary.
+The executor is still the component that would perform real work.
+The text output explicitly marks `read_only`, `sdep_request_sent=false`,
+`executor_called=false`, and `persisted=false`.
+It is intended to show: Spice selected, resolved a skill, compressed context,
+and planned the SDEP handoff.
+
+For machine-readable inspection:
+
+```sh
+python examples/decision_hub_demo/run_demo.py --general-full-loop-json --no-bars
+```
+
+Both commands are read-only. They do not persist state, call an executor, send
+SDEP, or modify the legacy demo runtime state.
+The confirmed approval and SDEP response in this full-loop view are local
+fixtures.
+
+The demo can also export a stable compare artifact from the same General Core
+read-only path:
 
 ```sh
 python examples/decision_hub_demo/run_demo.py --write-compare-artifact
@@ -147,7 +276,11 @@ examples/decision_hub_demo/compare_artifacts/meeting_vs_pr_conflict.json
 ```
 
 The artifact is not a raw trace dump. It is a decision comparison object built
-from the demo trace and shaped for human-readable inspection.
+from normalized demo signals and shaped for human-readable inspection.
+
+This path renders a Decision Card only. It does not authorize actions, execute
+actions, or call SDEP, Hermes, Codex, or an executor. The legacy scenario path
+remains the actual confirmation / execution demo path.
 
 Inspect it with:
 
@@ -156,12 +289,14 @@ python -m spice.entry decision compare \
   --input examples/decision_hub_demo/compare_artifacts/meeting_vs_pr_conflict.json
 ```
 
-To include the downstream execution section:
+To include the execution boundary placeholder:
 
 ```sh
 python -m spice.entry decision compare \
   --input examples/decision_hub_demo/compare_artifacts/meeting_vs_pr_conflict.json \
   --show-execution
 ```
+
+This section does not execute actions.
 
 Use `--json` to inspect the normalized comparison payload directly.

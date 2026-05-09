@@ -16,6 +16,26 @@ from examples.decision_hub_demo.confirmation import (
     DecisionControlLoop,
     format_confirmation_for_whatsapp,
 )
+from examples.decision_hub_demo.general_approval import build_general_approval_artifact as _build_general_approval_artifact
+from examples.decision_hub_demo.general_adapter import (
+    build_general_compare_artifact,
+    build_general_decision_artifact as _build_general_decision_artifact,
+    run_general_read_only_path,
+)
+from examples.decision_hub_demo.general_execution import (
+    approve_general_approval,
+    build_general_execution_artifact as _build_general_execution_artifact,
+)
+from examples.decision_hub_demo.general_loop import (
+    build_general_loop_artifact as _build_general_loop_artifact,
+)
+from examples.decision_hub_demo.general_outcome import (
+    build_general_outcome_artifact as _build_general_outcome_artifact,
+    build_general_sdep_response_fixture,
+)
+from examples.decision_hub_demo.general_state_feedback import (
+    build_general_state_feedback_artifact as _build_general_state_feedback_artifact,
+)
 from examples.decision_hub_demo.llm_simulation import build_simulation_runner_from_env
 from examples.decision_hub_demo.policy import DecisionHubRecommendationRunner
 from examples.decision_hub_demo.reducer import ingest_observation
@@ -136,6 +156,97 @@ def run_path(choice: str, *, now: datetime) -> dict[str, object]:
 
 
 def build_compare_artifact(*, now: datetime) -> dict[str, object]:
+    return build_general_compare_artifact(now=now)
+
+
+def build_general_decision_artifact(
+    *,
+    now: datetime | None = None,
+    use_bars: bool = False,
+) -> dict[str, object]:
+    return _build_general_decision_artifact(now=now, use_bars=use_bars)
+
+
+def build_general_approval_artifact(
+    *,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    resolved_now = now or datetime.now(timezone.utc).replace(microsecond=0)
+    return _build_general_approval_artifact(
+        run_general_read_only_path(now=resolved_now),
+        now=resolved_now,
+    )
+
+
+def build_general_execution_artifact(
+    *,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    resolved_now = now or datetime.now(timezone.utc).replace(microsecond=0)
+    result = run_general_read_only_path(now=resolved_now)
+    approval_artifact = _build_general_approval_artifact(result, now=resolved_now)
+    approval_payload = approval_artifact.get("approval")
+    approved = (
+        approve_general_approval(approval_payload, now=resolved_now)
+        if isinstance(approval_payload, dict)
+        else None
+    )
+    return _build_general_execution_artifact(
+        result,
+        approval=approved,
+        now=resolved_now,
+    )
+
+
+def build_general_outcome_artifact(
+    *,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    resolved_now = now or datetime.now(timezone.utc).replace(microsecond=0)
+    execution_artifact = build_general_execution_artifact(now=resolved_now)
+    response_payload = build_general_sdep_response_fixture(
+        execution_artifact,
+        now=resolved_now,
+    )
+    return _build_general_outcome_artifact(
+        execution_artifact,
+        response_payload,
+        now=resolved_now,
+    )
+
+
+def build_general_state_feedback_artifact(
+    *,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    resolved_now = now or datetime.now(timezone.utc).replace(microsecond=0)
+    result = run_general_read_only_path(now=resolved_now)
+    execution_artifact = build_general_execution_artifact(now=resolved_now)
+    response_payload = build_general_sdep_response_fixture(
+        execution_artifact,
+        now=resolved_now,
+    )
+    outcome_artifact = _build_general_outcome_artifact(
+        execution_artifact,
+        response_payload,
+        now=resolved_now,
+    )
+    return _build_general_state_feedback_artifact(
+        result.state,
+        outcome_artifact,
+        now=resolved_now,
+    )
+
+
+def build_general_loop_artifact(
+    *,
+    now: datetime | None = None,
+    use_bars: bool = False,
+) -> dict[str, object]:
+    return _build_general_loop_artifact(now=now, use_bars=use_bars)
+
+
+def build_legacy_compare_artifact(*, now: datetime) -> dict[str, object]:
     state = build_demo_state(now)
     result = DecisionHubRecommendationRunner(
         simulation_runner=build_simulation_runner_from_env()
@@ -158,7 +269,47 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--write-compare-artifact",
         action="store_true",
-        help="Write a compare artifact generated from the demo decision path.",
+        help="Write a compare artifact generated from the General Core read-only path.",
+    )
+    parser.add_argument(
+        "--general-decision-card",
+        action="store_true",
+        help="Print the read-only General Core decision comparison card.",
+    )
+    parser.add_argument(
+        "--general-approval",
+        action="store_true",
+        help="Print the read-only General Core approval checkpoint payload.",
+    )
+    parser.add_argument(
+        "--general-execution-plan",
+        action="store_true",
+        help="Print the read-only General Core execution plan payload without executing it.",
+    )
+    parser.add_argument(
+        "--general-outcome-return",
+        action="store_true",
+        help="Print the read-only General Core outcome-return payload from a fixture response.",
+    )
+    parser.add_argument(
+        "--general-state-feedback",
+        action="store_true",
+        help="Print the read-only General Core state feedback payload after applying the outcome observation.",
+    )
+    parser.add_argument(
+        "--general-full-loop",
+        action="store_true",
+        help="Print a human-readable read-only General Core full-loop summary.",
+    )
+    parser.add_argument(
+        "--general-full-loop-json",
+        action="store_true",
+        help="Print the read-only General Core full-loop artifact as JSON.",
+    )
+    parser.add_argument(
+        "--no-bars",
+        action="store_true",
+        help="Render the General Core decision card without score bars.",
     )
     parser.add_argument(
         "--compare-output-dir",
@@ -175,6 +326,43 @@ def main(argv: list[str] | None = None) -> None:
     if bool(args.write_compare_artifact):
         artifact_path = _write_compare_artifact(args.compare_output_dir, now=now)
         print(f"compare_artifact={artifact_path}")
+        return
+    if bool(args.general_decision_card):
+        print(
+            build_general_decision_artifact(
+                now=now,
+                use_bars=not bool(args.no_bars),
+            )["rendered_text"]
+        )
+        return
+    if bool(args.general_approval):
+        print(json.dumps(build_general_approval_artifact(now=now), indent=2, sort_keys=True))
+        return
+    if bool(args.general_execution_plan):
+        print(json.dumps(build_general_execution_artifact(now=now), indent=2, sort_keys=True))
+        return
+    if bool(args.general_outcome_return):
+        print(json.dumps(build_general_outcome_artifact(now=now), indent=2, sort_keys=True))
+        return
+    if bool(args.general_state_feedback):
+        print(json.dumps(build_general_state_feedback_artifact(now=now), indent=2, sort_keys=True))
+        return
+    if bool(args.general_full_loop):
+        print(
+            build_general_loop_artifact(
+                now=now,
+                use_bars=not bool(args.no_bars),
+            )["rendered_text"]
+        )
+        return
+    if bool(args.general_full_loop_json):
+        print(
+            json.dumps(
+                build_general_loop_artifact(now=now, use_bars=not bool(args.no_bars)),
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return
 
     print(

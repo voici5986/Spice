@@ -8,6 +8,11 @@ from spice.llm.core.provider import (
 )
 from spice.llm.core.registry import ProviderRegistry
 from spice.llm.core.router import LLMModelConfigOverride, LLMRouteNotFoundError, LLMRouter
+from spice.llm.core.runtime import (
+    LLMRuntimeProviderSpec,
+    ResolvedLLMRuntime,
+    resolve_llm_runtime,
+)
 from spice.llm.core.task_hooks import LLMTaskHook
 from spice.llm.core.types import LLMModelConfig, LLMRequest, LLMResponse
 
@@ -22,6 +27,9 @@ __all__ = [
     "LLMRouter",
     "LLMModelConfigOverride",
     "LLMRouteNotFoundError",
+    "LLMRuntimeProviderSpec",
+    "ResolvedLLMRuntime",
+    "resolve_llm_runtime",
     "LLMTaskHook",
     "LLMRequest",
     "LLMModelConfig",

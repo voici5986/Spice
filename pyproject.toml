@@ -18,6 +18,9 @@ classifiers = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+tui = ["prompt_toolkit>=3.0", "rich>=13.0"]
+
 [project.urls]
 Homepage = "https://github.com/Dyalwayshappy/Spice"
 Repository = "https://github.com/Dyalwayshappy/Spice"

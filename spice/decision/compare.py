@@ -19,9 +19,17 @@ def analyze_compare_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
                 "title": item["title"],
                 "action": item["action"],
                 "intent": item["intent"],
+                "recommended_action": item.get("recommended_action", ""),
+                "why_now": item.get("why_now", []),
+                "expected_result": item.get("expected_result", ""),
+                "executor_task": item.get("executor_task", ""),
+                "execution_affordance": item.get("execution_affordance", {}),
+                "skill_resolution": item.get("skill_resolution", {}),
                 "enabled_reason": item["enabled_reason"],
                 "requires_confirmation": item["requires_confirmation"],
                 "expected_effect": item["expected_effect"],
+                "simulation": item.get("simulation", {}),
+                "history": item.get("history", {}),
                 "score_total": score["score_total"],
                 "dimensions": sorted(
                     score["dimensions"],
@@ -45,6 +53,7 @@ def analyze_compare_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
         "expected_outcome_or_risk": normalized["expected_outcome_or_risk"],
         "execution_boundary": normalized["execution_boundary"],
         "outcome_return": normalized["outcome_return"],
+        "warnings": normalized.get("warnings", []),
     }
 
 
@@ -59,6 +68,13 @@ def render_compare_text(
     lines.append("DECISION COMPARISON")
     lines.append(f"decision_id: {analysis['decision_id']}")
     lines.append(f"trace_ref: {analysis['trace_ref']}")
+    if analysis.get("warnings"):
+        lines.append("")
+        lines.append("WARNINGS")
+        for warning in analysis["warnings"][:3]:
+            lines.append(f"- {warning['message']}")
+            if warning.get("reason"):
+                lines.append(f"  Reason: {warning['reason']}")
     lines.append("")
     lines.append("DECISION-RELEVANT STATE")
     lines.extend(_render_state_summary(analysis["decision_relevant_state_summary"]))
@@ -69,11 +85,27 @@ def render_compare_text(
     for index, candidate in enumerate(analysis["candidates"]):
         prefix = chr(ord("A") + index)
         lines.append(f"{prefix}. {candidate['title']}")
-        lines.append(f"   action: {candidate['action']}")
-        if candidate["intent"]:
-            lines.append(f"   intent: {candidate['intent']}")
+        if candidate.get("recommended_action"):
+            lines.append(f"   recommendation: {candidate['recommended_action']}")
+        elif candidate["intent"]:
+            lines.append(f"   recommendation: {candidate['intent']}")
+        why_now = candidate.get("why_now") or []
+        if why_now:
+            lines.append("   why now:")
+            lines.extend(f"   - {item}" for item in why_now[:3])
         if candidate["enabled_reason"]:
-            lines.append(f"   enabled because: {candidate['enabled_reason']}")
+            lines.append(f"   available because: {candidate['enabled_reason']}")
+        if candidate.get("expected_result"):
+            lines.append(f"   expected result: {candidate['expected_result']}")
+        if candidate.get("executor_task"):
+            lines.append(f"   executor task: {candidate['executor_task']}")
+        affordance = candidate.get("execution_affordance") or {}
+        if affordance:
+            lines.append(f"   execution: {_render_execution_affordance(affordance)}")
+        skill_resolution = candidate.get("skill_resolution") or {}
+        if skill_resolution:
+            lines.append(f"   skill: {_render_skill_resolution(skill_resolution)}")
+        lines.append(f"   internal action: {candidate['action']}")
         lines.append("   score dimensions:")
         for dimension in candidate["dimensions"]:
             lines.append("   " + _format_dimension_line(dimension, use_bars=use_bars))
@@ -86,6 +118,14 @@ def render_compare_text(
         lines.append("   tradeoff rules: " + _render_tradeoff_rules(candidate["tradeoff_rules"]))
         lines.append("   expected outcome / risk:")
         lines.extend("   " + item for item in _render_expected_effect(candidate["expected_effect"]))
+        if candidate.get("simulation"):
+            lines.append("   LLM simulation:")
+            lines.extend("   " + item for item in _render_simulation(candidate["simulation"]))
+        if candidate.get("history"):
+            rendered_history = _render_history(candidate["history"])
+            if rendered_history:
+                lines.append("   history:")
+                lines.extend("   " + item for item in rendered_history)
         lines.append("")
 
     selected = analysis["selected_recommendation"]
@@ -225,7 +265,108 @@ def _render_expected_effect(expected: Mapping[str, Any]) -> list[str]:
     ]
 
 
+def _render_simulation(simulation: Mapping[str, Any]) -> list[str]:
+    lines = []
+    outcome = simulation.get("expected_outcome") or simulation.get("simulated_outcome")
+    if outcome:
+        lines.append(f"- expected outcome: {outcome}")
+    downside = simulation.get("downside")
+    if downside:
+        lines.append(f"- downside: {downside}")
+    success_signal = simulation.get("success_signal")
+    if success_signal:
+        lines.append(f"- success signal: {success_signal}")
+    time_fit = simulation.get("time_fit")
+    if time_fit:
+        lines.append(f"- time fit: {time_fit}")
+    benefits = simulation.get("likely_benefits") or []
+    if benefits:
+        lines.append(f"- likely benefits: {_join_limited(benefits)}")
+    risks = simulation.get("likely_risks") or []
+    if risks:
+        lines.append(f"- likely risks: {_join_limited(risks)}")
+    if simulation.get("estimated_time_minutes") is not None:
+        lines.append(f"- simulated time: {_format_minutes(simulation.get('estimated_time_minutes'))}")
+    failures = simulation.get("failure_modes") or []
+    if failures:
+        lines.append(f"- failure modes: {_join_limited(failures)}")
+    if simulation.get("confidence") is not None:
+        try:
+            lines.append(f"- confidence: {float(simulation.get('confidence')):.2f}")
+        except (TypeError, ValueError):
+            pass
+    return lines or ["- no simulation details recorded"]
+
+
+def _render_history(history: Mapping[str, Any]) -> list[str]:
+    count = int(history.get("similar_outcome_count") or 0)
+    if count <= 0:
+        return []
+    success = int(history.get("success_count") or 0)
+    failed = int(history.get("failure_count") or 0)
+    partial = int(history.get("partial_count") or 0)
+    score = float(history.get("historical_score") or 0.0)
+    fragments = [f"{success}/{count} success"]
+    if partial:
+        fragments.append(f"{partial} partial")
+    if failed:
+        fragments.append(f"{failed} failed")
+    fragments.append(f"score {score:.2f}")
+    return [f"- similar outcomes: {', '.join(fragments)}"]
+
+
+def _render_execution_affordance(affordance: Mapping[str, Any]) -> str:
+    executor = affordance.get("executor") or {}
+    permission = affordance.get("permission") or {}
+    approval = affordance.get("approval") or {}
+    executor_id = executor.get("executor_id") or "unknown"
+    configured = permission.get("configured") or "unknown"
+    required = permission.get("required") or "unknown"
+    if not affordance.get("candidate_executable"):
+        reason = str(affordance.get("blocked_reason") or "")
+        if "execution_intent" in reason or "advisory" in reason.lower():
+            return (
+                "advisory only; no executor handoff requested; "
+                f"executor={executor_id}; approval not required"
+            )
+        return (
+            f"handoff unavailable ({reason or 'not approval eligible'}); "
+            f"executor={executor_id}; permission={configured}->{required}; approval not available"
+        )
+    approval_text = "approval required" if approval.get("required") else "approval not required"
+    if affordance.get("blocked"):
+        reason = affordance.get("blocked_reason") or "blocked"
+        return (
+            f"handoff blocked ({reason}); executor={executor_id}; "
+            f"permission={configured}->{required}; {approval_text}"
+        )
+    return (
+        f"ready for approval via {executor_id}; "
+        f"permission={configured}->{required}; {approval_text}"
+    )
+
+
+def _render_skill_resolution(skill_resolution: Mapping[str, Any]) -> str:
+    status = str(skill_resolution.get("status") or "unknown")
+    resolved = skill_resolution.get("resolved_skill")
+    if isinstance(resolved, Mapping):
+        skill_id = str(resolved.get("skill_id") or "unknown")
+        executor_id = str(resolved.get("executor_id") or "unknown")
+        source = ""
+        metadata = resolved.get("metadata")
+        if isinstance(metadata, Mapping):
+            source = str(metadata.get("skill_source") or "")
+        suffix = f"; source={source}" if source else ""
+        return f"{skill_id} via {executor_id}{suffix}"
+    reasons = skill_resolution.get("unresolved_reasons")
+    if isinstance(reasons, list) and reasons:
+        return f"{status}: {str(reasons[0])}"
+    return status
+
+
 def _render_selected_basis(reason: Mapping[str, Any]) -> str:
+    if reason.get("summary"):
+        return str(reason.get("summary"))
     kind = str(reason.get("kind", ""))
     if kind == "weighted_dimension":
         return (
@@ -245,6 +386,8 @@ def _render_selected_basis(reason: Mapping[str, Any]) -> str:
 
 
 def _render_why_not_reason(reason: Mapping[str, Any]) -> str:
+    if reason.get("summary"):
+        return str(reason.get("summary"))
     kind = str(reason.get("kind", ""))
     if kind == "veto":
         return (
@@ -279,3 +422,9 @@ def _format_minutes(value: Any) -> str:
         return f"{number} minutes"
     except (TypeError, ValueError):
         return "unknown"
+
+
+def _join_limited(values: Any, *, limit: int = 3) -> str:
+    if not isinstance(values, list):
+        return ""
+    return "; ".join(str(item) for item in values[:limit] if str(item).strip())

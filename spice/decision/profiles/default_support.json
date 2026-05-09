@@ -3,7 +3,12 @@
     "outcome_value",
     "risk_reduction",
     "reversibility",
-    "confidence_alignment"
+    "confidence_alignment",
+    "urgency_alignment",
+    "effort_fit",
+    "impact_potential",
+    "historical_outcome_alignment",
+    "preference_alignment"
   ],
   "constraint_ids": [
     "no_declared_veto_violation"

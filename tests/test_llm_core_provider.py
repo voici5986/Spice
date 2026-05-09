@@ -24,7 +24,11 @@ from spice.llm.core import (
     ProviderRegistry,
 )
 from spice.llm.providers import (
+    AnthropicLLMProvider,
+    DeepSeekLLMProvider,
     DeterministicLLMProvider,
+    MiMoLLMProvider,
+    OpenAILLMProvider,
     OpenRouterLLMProvider,
     SubprocessLLMProvider,
 )
@@ -252,7 +256,7 @@ class LLMCoreProviderTests(unittest.TestCase):
                 "SPICE_OPENROUTER_SITE_URL": "https://github.com/Dyalwayshappy/Spice",
                 "SPICE_OPENROUTER_APP_NAME": "Spice",
             },
-        ), patch("spice.llm.providers.openrouter.urllib_request.urlopen", fake_urlopen):
+        ), patch("spice.llm.providers.chat_completions.urllib_request.urlopen", fake_urlopen):
             response = provider.generate(
                 LLMRequest(
                     task_hook=LLMTaskHook.SIMULATION_ADVISE,
@@ -295,6 +299,573 @@ class LLMCoreProviderTests(unittest.TestCase):
         self.assertEqual(response.finish_reason, "stop")
         self.assertEqual(response.request_id, "chatcmpl-test")
 
+    def test_openai_provider_invocation_success(self) -> None:
+        provider = OpenAILLMProvider()
+        captured: dict[str, object] = {}
+
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "id": "chatcmpl-openai-test",
+                        "model": "gpt-4o-mini",
+                        "choices": [
+                            {
+                                "finish_reason": "stop",
+                                "message": {"role": "assistant", "content": '{"ok": true}'},
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 8,
+                            "completion_tokens": 4,
+                            "total_tokens": 12,
+                        },
+                    }
+                ).encode("utf-8")
+
+        def fake_urlopen(request: object, timeout: float | None = None) -> FakeResponse:
+            captured["url"] = getattr(request, "full_url")
+            captured["timeout"] = timeout
+            captured["headers"] = {
+                key.lower(): value
+                for key, value in getattr(request, "header_items")()
+            }
+            captured["payload"] = json.loads(getattr(request, "data").decode("utf-8"))
+            return FakeResponse()
+
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "test-openai-key",
+                "SPICE_OPENAI_BASE_URL": "https://api.openai.com/v1",
+                "OPENAI_ORG_ID": "org-test",
+                "OPENAI_PROJECT_ID": "proj-test",
+            },
+        ), patch("spice.llm.providers.chat_completions.urllib_request.urlopen", fake_urlopen):
+            response = provider.generate(
+                LLMRequest(
+                    task_hook=LLMTaskHook.SIMULATION_ADVISE,
+                    system_text="system prompt",
+                    input_text="user prompt",
+                ),
+                LLMModelConfig(
+                    provider_id="openai",
+                    model_id="gpt-4o-mini",
+                    temperature=0.2,
+                    max_tokens=128,
+                    timeout_sec=9.0,
+                    response_format_hint="json_object",
+                ),
+            )
+
+        self.assertEqual(captured["url"], "https://api.openai.com/v1/chat/completions")
+        self.assertEqual(captured["timeout"], 9.0)
+        headers = captured["headers"]
+        self.assertIsInstance(headers, dict)
+        self.assertEqual(headers.get("authorization"), "Bearer test-openai-key")
+        self.assertEqual(headers.get("openai-organization"), "org-test")
+        self.assertEqual(headers.get("openai-project"), "proj-test")
+        payload = captured["payload"]
+        self.assertIsInstance(payload, dict)
+        self.assertEqual(payload["model"], "gpt-4o-mini")
+        self.assertEqual(
+            payload["messages"],
+            [
+                {"role": "system", "content": "system prompt"},
+                {"role": "user", "content": "user prompt"},
+            ],
+        )
+        self.assertEqual(payload["temperature"], 0.2)
+        self.assertEqual(payload["max_tokens"], 128)
+        self.assertEqual(payload["response_format"], {"type": "json_object"})
+        self.assertEqual(response.provider_id, "openai")
+        self.assertEqual(response.model_id, "gpt-4o-mini")
+        self.assertEqual(response.output_text, '{"ok": true}')
+        self.assertEqual(response.finish_reason, "stop")
+        self.assertEqual(response.request_id, "chatcmpl-openai-test")
+
+    def test_openai_provider_requires_api_key(self) -> None:
+        provider = OpenAILLMProvider()
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(LLMAuthError):
+                provider.generate(
+                    LLMRequest(task_hook=LLMTaskHook.ASSIST_DRAFT, input_text="x"),
+                    LLMModelConfig(provider_id="openai", model_id="gpt-4o-mini"),
+                )
+
+    def test_openai_provider_rate_limit_error_normalization(self) -> None:
+        provider = OpenAILLMProvider()
+
+        def fake_urlopen(request: object, timeout: float | None = None) -> object:
+            raise urllib.error.HTTPError(
+                url="https://api.openai.com/v1/chat/completions",
+                code=429,
+                msg="Too Many Requests",
+                hdrs=None,
+                fp=io.BytesIO(b'{"error":"rate limited"}'),
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}), patch(
+            "spice.llm.providers.chat_completions.urllib_request.urlopen",
+            fake_urlopen,
+        ):
+            with self.assertRaises(LLMRateLimitError):
+                provider.generate(
+                    LLMRequest(task_hook=LLMTaskHook.ASSIST_DRAFT, input_text="x"),
+                    LLMModelConfig(provider_id="openai", model_id="gpt-4o-mini"),
+                )
+
+    def test_anthropic_provider_invocation_success(self) -> None:
+        provider = AnthropicLLMProvider()
+        captured: dict[str, object] = {}
+
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "id": "msg-test",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "claude-3-5-sonnet-latest",
+                        "content": [
+                            {"type": "text", "text": '{"ok": true}'},
+                        ],
+                        "stop_reason": "end_turn",
+                        "usage": {
+                            "input_tokens": 9,
+                            "output_tokens": 5,
+                        },
+                    }
+                ).encode("utf-8")
+
+        def fake_urlopen(request: object, timeout: float | None = None) -> FakeResponse:
+            captured["url"] = getattr(request, "full_url")
+            captured["timeout"] = timeout
+            captured["headers"] = {
+                key.lower(): value
+                for key, value in getattr(request, "header_items")()
+            }
+            captured["payload"] = json.loads(getattr(request, "data").decode("utf-8"))
+            return FakeResponse()
+
+        with patch.dict(
+            os.environ,
+            {
+                "ANTHROPIC_API_KEY": "test-anthropic-key",
+                "SPICE_ANTHROPIC_BASE_URL": "https://api.anthropic.com/v1",
+                "SPICE_ANTHROPIC_VERSION": "2023-06-01",
+            },
+        ), patch("spice.llm.providers.anthropic.urllib_request.urlopen", fake_urlopen):
+            response = provider.generate(
+                LLMRequest(
+                    task_hook=LLMTaskHook.SIMULATION_ADVISE,
+                    system_text="system prompt",
+                    input_text="user prompt",
+                ),
+                LLMModelConfig(
+                    provider_id="anthropic",
+                    model_id="claude-3-5-sonnet-latest",
+                    temperature=0.2,
+                    max_tokens=128,
+                    timeout_sec=9.0,
+                    response_format_hint="json_object",
+                ),
+            )
+
+        self.assertEqual(captured["url"], "https://api.anthropic.com/v1/messages")
+        self.assertEqual(captured["timeout"], 9.0)
+        headers = captured["headers"]
+        self.assertIsInstance(headers, dict)
+        self.assertEqual(headers.get("x-api-key"), "test-anthropic-key")
+        self.assertEqual(headers.get("anthropic-version"), "2023-06-01")
+        payload = captured["payload"]
+        self.assertIsInstance(payload, dict)
+        self.assertEqual(payload["model"], "claude-3-5-sonnet-latest")
+        self.assertEqual(payload["system"], "system prompt")
+        self.assertEqual(payload["messages"], [{"role": "user", "content": "user prompt"}])
+        self.assertEqual(payload["temperature"], 0.2)
+        self.assertEqual(payload["max_tokens"], 128)
+        self.assertNotIn("response_format", payload)
+        self.assertEqual(response.provider_id, "anthropic")
+        self.assertEqual(response.model_id, "claude-3-5-sonnet-latest")
+        self.assertEqual(response.output_text, '{"ok": true}')
+        self.assertEqual(response.finish_reason, "end_turn")
+        self.assertEqual(response.request_id, "msg-test")
+
+    def test_anthropic_provider_defaults_max_tokens(self) -> None:
+        provider = AnthropicLLMProvider()
+        captured: dict[str, object] = {}
+
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "id": "msg-default-tokens",
+                        "model": "claude-3-5-haiku-latest",
+                        "content": [{"type": "text", "text": "ok"}],
+                        "stop_reason": "end_turn",
+                    }
+                ).encode("utf-8")
+
+        def fake_urlopen(request: object, timeout: float | None = None) -> FakeResponse:
+            captured["payload"] = json.loads(getattr(request, "data").decode("utf-8"))
+            return FakeResponse()
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}), patch(
+            "spice.llm.providers.anthropic.urllib_request.urlopen",
+            fake_urlopen,
+        ):
+            provider.generate(
+                LLMRequest(task_hook=LLMTaskHook.ASSIST_DRAFT, input_text="x"),
+                LLMModelConfig(provider_id="anthropic", model_id="claude-3-5-haiku-latest"),
+            )
+
+        payload = captured["payload"]
+        self.assertIsInstance(payload, dict)
+        self.assertEqual(payload["max_tokens"], 1024)
+
+    def test_anthropic_provider_requires_api_key(self) -> None:
+        provider = AnthropicLLMProvider()
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(LLMAuthError):
+                provider.generate(
+                    LLMRequest(task_hook=LLMTaskHook.ASSIST_DRAFT, input_text="x"),
+                    LLMModelConfig(provider_id="anthropic", model_id="claude-3-5-sonnet-latest"),
+                )
+
+    def test_anthropic_provider_rate_limit_error_normalization(self) -> None:
+        provider = AnthropicLLMProvider()
+
+        def fake_urlopen(request: object, timeout: float | None = None) -> object:
+            raise urllib.error.HTTPError(
+                url="https://api.anthropic.com/v1/messages",
+                code=429,
+                msg="Too Many Requests",
+                hdrs=None,
+                fp=io.BytesIO(b'{"error":{"type":"rate_limit_error"}}'),
+            )
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}), patch(
+            "spice.llm.providers.anthropic.urllib_request.urlopen",
+            fake_urlopen,
+        ):
+            with self.assertRaises(LLMRateLimitError):
+                provider.generate(
+                    LLMRequest(task_hook=LLMTaskHook.ASSIST_DRAFT, input_text="x"),
+                    LLMModelConfig(provider_id="anthropic", model_id="claude-3-5-sonnet-latest"),
+                )
+
+    def test_deepseek_provider_invocation_success(self) -> None:
+        provider = DeepSeekLLMProvider()
+        captured: dict[str, object] = {}
+
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "id": "chatcmpl-deepseek-test",
+                        "model": "deepseek-chat",
+                        "choices": [
+                            {
+                                "finish_reason": "stop",
+                                "message": {"role": "assistant", "content": '{"ok": true}'},
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 6,
+                            "completion_tokens": 4,
+                            "total_tokens": 10,
+                        },
+                    }
+                ).encode("utf-8")
+
+        def fake_urlopen(request: object, timeout: float | None = None) -> FakeResponse:
+            captured["url"] = getattr(request, "full_url")
+            captured["timeout"] = timeout
+            captured["headers"] = {
+                key.lower(): value
+                for key, value in getattr(request, "header_items")()
+            }
+            captured["payload"] = json.loads(getattr(request, "data").decode("utf-8"))
+            return FakeResponse()
+
+        with patch.dict(
+            os.environ,
+            {
+                "DEEPSEEK_API_KEY": "test-deepseek-key",
+                "SPICE_DEEPSEEK_BASE_URL": "https://api.deepseek.com",
+            },
+        ), patch("spice.llm.providers.chat_completions.urllib_request.urlopen", fake_urlopen):
+            response = provider.generate(
+                LLMRequest(
+                    task_hook=LLMTaskHook.SIMULATION_ADVISE,
+                    system_text="system prompt",
+                    input_text="user prompt",
+                ),
+                LLMModelConfig(
+                    provider_id="deepseek",
+                    model_id="deepseek-chat",
+                    temperature=0.2,
+                    max_tokens=128,
+                    timeout_sec=9.0,
+                    response_format_hint="json_object",
+                ),
+            )
+
+        self.assertEqual(captured["url"], "https://api.deepseek.com/chat/completions")
+        self.assertEqual(captured["timeout"], 9.0)
+        headers = captured["headers"]
+        self.assertIsInstance(headers, dict)
+        self.assertEqual(headers.get("authorization"), "Bearer test-deepseek-key")
+        payload = captured["payload"]
+        self.assertIsInstance(payload, dict)
+        self.assertEqual(payload["model"], "deepseek-chat")
+        self.assertEqual(
+            payload["messages"],
+            [
+                {"role": "system", "content": "system prompt"},
+                {"role": "user", "content": "user prompt"},
+            ],
+        )
+        self.assertEqual(payload["temperature"], 0.2)
+        self.assertEqual(payload["max_tokens"], 128)
+        self.assertEqual(payload["response_format"], {"type": "json_object"})
+        self.assertEqual(response.provider_id, "deepseek")
+        self.assertEqual(response.model_id, "deepseek-chat")
+        self.assertEqual(response.output_text, '{"ok": true}')
+        self.assertEqual(response.finish_reason, "stop")
+        self.assertEqual(response.request_id, "chatcmpl-deepseek-test")
+
+    def test_deepseek_provider_requires_api_key(self) -> None:
+        provider = DeepSeekLLMProvider()
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(LLMAuthError):
+                provider.generate(
+                    LLMRequest(task_hook=LLMTaskHook.ASSIST_DRAFT, input_text="x"),
+                    LLMModelConfig(provider_id="deepseek", model_id="deepseek-chat"),
+                )
+
+    def test_deepseek_provider_rate_limit_error_normalization(self) -> None:
+        provider = DeepSeekLLMProvider()
+
+        def fake_urlopen(request: object, timeout: float | None = None) -> object:
+            raise urllib.error.HTTPError(
+                url="https://api.deepseek.com/chat/completions",
+                code=429,
+                msg="Too Many Requests",
+                hdrs=None,
+                fp=io.BytesIO(b'{"error":"rate limited"}'),
+            )
+
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}), patch(
+            "spice.llm.providers.chat_completions.urllib_request.urlopen",
+            fake_urlopen,
+        ):
+            with self.assertRaises(LLMRateLimitError):
+                provider.generate(
+                    LLMRequest(task_hook=LLMTaskHook.ASSIST_DRAFT, input_text="x"),
+                    LLMModelConfig(provider_id="deepseek", model_id="deepseek-chat"),
+                )
+
+    def test_mimo_provider_invocation_success(self) -> None:
+        provider = MiMoLLMProvider()
+        captured: dict[str, object] = {}
+
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "id": "chatcmpl-mimo-test",
+                        "model": "mimo-v2.5-pro",
+                        "choices": [
+                            {
+                                "finish_reason": "stop",
+                                "message": {"role": "assistant", "content": '{"ok": true}'},
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 6,
+                            "completion_tokens": 4,
+                            "total_tokens": 10,
+                        },
+                    }
+                ).encode("utf-8")
+
+        def fake_urlopen(request: object, timeout: float | None = None) -> FakeResponse:
+            captured["url"] = getattr(request, "full_url")
+            captured["timeout"] = timeout
+            captured["headers"] = {
+                key.lower(): value
+                for key, value in getattr(request, "header_items")()
+            }
+            captured["payload"] = json.loads(getattr(request, "data").decode("utf-8"))
+            return FakeResponse()
+
+        with patch.dict(
+            os.environ,
+            {
+                "XIAOMI_API_KEY": "test-mimo-key",
+            },
+            clear=True,
+        ), patch("spice.llm.providers.chat_completions.urllib_request.urlopen", fake_urlopen):
+            response = provider.generate(
+                LLMRequest(
+                    task_hook=LLMTaskHook.SIMULATION_ADVISE,
+                    system_text="system prompt",
+                    input_text="user prompt",
+                ),
+                LLMModelConfig(
+                    provider_id="mimo",
+                    model_id="mimo-v2.5-pro",
+                    temperature=0.2,
+                    max_tokens=128,
+                    timeout_sec=9.0,
+                    response_format_hint="json_object",
+                ),
+            )
+
+        self.assertEqual(
+            captured["url"],
+            "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+        )
+        self.assertEqual(captured["timeout"], 9.0)
+        headers = captured["headers"]
+        self.assertIsInstance(headers, dict)
+        self.assertIsNone(headers.get("api-key"))
+        self.assertEqual(headers.get("authorization"), "Bearer test-mimo-key")
+        payload = captured["payload"]
+        self.assertIsInstance(payload, dict)
+        self.assertEqual(payload["model"], "mimo-v2.5-pro")
+        self.assertEqual(
+            payload["messages"],
+            [
+                {"role": "system", "content": "system prompt"},
+                {"role": "user", "content": "user prompt"},
+            ],
+        )
+        self.assertEqual(payload["temperature"], 0.2)
+        self.assertEqual(payload["max_completion_tokens"], 128)
+        self.assertEqual(payload["response_format"], {"type": "json_object"})
+        self.assertEqual(response.provider_id, "mimo")
+        self.assertEqual(response.model_id, "mimo-v2.5-pro")
+        self.assertEqual(response.output_text, '{"ok": true}')
+        self.assertEqual(response.finish_reason, "stop")
+        self.assertEqual(response.request_id, "chatcmpl-mimo-test")
+
+    def test_mimo_provider_requires_api_key(self) -> None:
+        provider = MiMoLLMProvider()
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(LLMAuthError):
+                provider.generate(
+                    LLMRequest(task_hook=LLMTaskHook.ASSIST_DRAFT, input_text="x"),
+                    LLMModelConfig(provider_id="mimo", model_id="mimo-v2.5-pro"),
+                )
+
+    def test_mimo_provider_accepts_legacy_env_aliases(self) -> None:
+        provider = MiMoLLMProvider()
+        captured: dict[str, object] = {}
+
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "id": "chatcmpl-mimo-legacy",
+                        "model": "mimo-v2.5-pro",
+                        "choices": [
+                            {
+                                "finish_reason": "stop",
+                                "message": {"role": "assistant", "content": "ok"},
+                            }
+                        ],
+                    }
+                ).encode("utf-8")
+
+        def fake_urlopen(request: object, timeout: float | None = None) -> FakeResponse:
+            captured["url"] = getattr(request, "full_url")
+            captured["headers"] = {
+                key.lower(): value
+                for key, value in getattr(request, "header_items")()
+            }
+            return FakeResponse()
+
+        with patch.dict(
+            os.environ,
+            {
+                "MIMO_API_KEY": "legacy-key",
+                "SPICE_MIMO_BASE_URL": "https://legacy.example/v1",
+            },
+            clear=True,
+        ), patch("spice.llm.providers.chat_completions.urllib_request.urlopen", fake_urlopen):
+            response = provider.generate(
+                LLMRequest(task_hook=LLMTaskHook.ASSIST_DRAFT, input_text="x"),
+                LLMModelConfig(provider_id="mimo", model_id="mimo-v2.5-pro"),
+            )
+
+        self.assertEqual(captured["url"], "https://legacy.example/v1/chat/completions")
+        headers = captured["headers"]
+        self.assertIsInstance(headers, dict)
+        self.assertIsNone(headers.get("api-key"))
+        self.assertEqual(headers.get("authorization"), "Bearer legacy-key")
+        self.assertEqual(response.request_id, "chatcmpl-mimo-legacy")
+
+    def test_mimo_provider_rate_limit_error_normalization(self) -> None:
+        provider = MiMoLLMProvider()
+
+        def fake_urlopen(request: object, timeout: float | None = None) -> object:
+            raise urllib.error.HTTPError(
+                url="https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+                code=429,
+                msg="Too Many Requests",
+                hdrs=None,
+                fp=io.BytesIO(b'{"error":"rate limited"}'),
+            )
+
+        with patch.dict(os.environ, {"XIAOMI_API_KEY": "test-key"}), patch(
+            "spice.llm.providers.chat_completions.urllib_request.urlopen",
+            fake_urlopen,
+        ):
+            with self.assertRaises(LLMRateLimitError):
+                provider.generate(
+                    LLMRequest(task_hook=LLMTaskHook.ASSIST_DRAFT, input_text="x"),
+                    LLMModelConfig(provider_id="mimo", model_id="mimo-v2.5-pro"),
+                )
+
     def test_openrouter_provider_requires_api_key(self) -> None:
         provider = OpenRouterLLMProvider()
         with patch.dict(os.environ, {}, clear=True):
@@ -329,7 +900,7 @@ class LLMCoreProviderTests(unittest.TestCase):
             )
 
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}), patch(
-            "spice.llm.providers.openrouter.urllib_request.urlopen",
+            "spice.llm.providers.chat_completions.urllib_request.urlopen",
             fake_urlopen,
         ):
             with self.assertRaises(LLMRateLimitError):
@@ -355,7 +926,7 @@ class LLMCoreProviderTests(unittest.TestCase):
                 return b'{"choices":[]}'
 
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}), patch(
-            "spice.llm.providers.openrouter.urllib_request.urlopen",
+            "spice.llm.providers.chat_completions.urllib_request.urlopen",
             lambda request, timeout=None: FakeResponse(),
         ):
             with self.assertRaises(LLMResponseError):
