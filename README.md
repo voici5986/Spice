@@ -653,11 +653,34 @@ It enables a new way to think, decide, and act:
 
 ## 🔗 SDEP (Spice Decision Execution Protocol)
 
-SDEP is a protocol-layer specification for connecting a decision system with external execution agents.
+SDEP is the protocol boundary between **decision** and **execution**.
+
+Spice remains the decision runtime:
+
+```text
+Decision
+-> ExecutionIntent
+-> SDEP
+-> External Agent
+-> ExecutionResult
+-> Outcome
+-> Reflection
+```
+
+SDEP lets external execution-layer agents run behind Spice through a shared wire contract.
+
+It is:
+
+- **transport-agnostic** — the same payload shape can be carried over stdin/stdout, HTTP, queues, or RPC
+- **protocol-first** — external agents do not need to understand Spice internals
+- **auditable** — execution intent and execution result are structured and traceable
+- **executor-agnostic** — different agents can implement the same wire contract
+
+SDEP is not a reasoning framework and not an agent loop.
 
 It defines a **standardized boundary** between:
 
-- **Decision (what to do)**
+- **Decision (what should be done)**
 
 - **Execution (how it is done)**
 
@@ -672,15 +695,30 @@ If you want to understand or implement SDEP, start from:
 - **Example payloads**: `examples/sdep_payloads/v0.1/`
 - **Executor quickstart**: `examples/sdep_quickstart/`
 - **Wrapper template**: `examples/sdep_wrapper_template/`
+- **Reference adapter**: `spice/executors/sdep.py`
+- **Example agent**: `examples/sdep_agent_demo/echo_agent.py`
 
 SDEP v0.1 defines:
 
-- `execute.request`
-- `execute.response`
-- `agent.describe.request`
-- `agent.describe.response`
+- one shot `execute.request` / `execute.response`
+- optional `agent.describe.request` / `agent.describe.response`
+- sender/responder identity
+- deterministic request identity and idempotency key
+- explicit success/failure signaling
+- canonical execution / outcome payloads
 
-The schemas validate the public wire contract. Domain-specific payloads such as `execution.parameters`, `execution.input`, `metadata`, and `traceability` remain open extension objects.
+Reserved for future versions:
+
+- streaming partial outputs
+- async job polling
+- capability negotiation handshake
+- online autonomous policy mutation
+
+
+For the full protocol contract, normative rules, JSON examples, and mapping details, see docs/sdep_v0_1.md.
+
+> Execution will become cheap and abundant.
+> Decision will become the bottleneck.
 
 ---
 
@@ -702,100 +740,10 @@ It externalizes the “Act” step into a first-class protocol boundary
 | Protocol (SDEP)          | how decisions cross into execution     |
 | Execution                | how actions are actually performed     |
 
----
-
-### 2. Why SDEP Exists
-
-In most systems today:
-
-- decision logic is tightly coupled to specific tools
-  
-- execution is not standardized
-  
-- results lack the determinism and transparency required for production-grade reliability
-
-SDEP introduces a clean separation:
-
-- **Decision layer (Spice)** → produces structured intent
-- **Execution layer (agents/tools)** → performs actions
-
-This enables:
-
-- interchangeable execution backends
-- explicit decision → action mapping
-- full traceability of “why this action happened”
-
-> SDEP is not a reasoning framework.
-
-> It is the interface contract between thinking and doing.
 
 ---
 
-### 3. Core Abstractions
-
-SDEP defines a minimal set of protocol primitives:
-
-#### 3.1 ExecutionIntent
-
-A structured representation of *what should be executed*.
-
-Includes:
-
-- intent type
-- target (tool / agent / environment)
-- input payload
-- optional constraints / metadata
-
----
-
-#### 3.2 ExecutionResult
-
-A normalized representation of *what actually happened*.
-
-Includes:
-
-- status (success / failure / partial)
-- outputs (logs, artifacts, messages)
-- signals (e.g. requires_attention, retryable)
-
----
-
-#### 3.3 Outcome
-
-A domain-aware interpretation of execution results:
-
-- maps raw results → state updates
-- enables reflection and learning
-
----
-
-### 4. Execution Flow
-
-SDEP formalizes the boundary between decision and execution:
-
-```
-Decision
-↓
-ExecutionIntent
-↓
-[ SDEP Boundary ]
-↓
-External Agent / Tool
-↓
-ExecutionResult
-↓
-Outcome
-↓
-Reflection / State Update
-```
-
-Key idea:
-
-> Everything crossing the boundary is **structured, explicit, and observable**
-
----
-
-### 5. SDEP vs Existing Agent Patterns
+### 2. SDEP vs Existing Agent Patterns
 
 #### vs ReAct
 
@@ -824,7 +772,7 @@ SDEP makes it:
 
 ---
 
-### 6. What This Enables
+### 3. What This Enables
 
 - **Same Brain, Different Agent**
   Switch execution backends without changing decision logic
@@ -839,81 +787,33 @@ SDEP makes it:
   CLI, APIs, agents, humans — all become interchangeable executors
 
 
----
-
-
-### 7. Design Philosophy
-
-> Execution will become cheap and abundant.
-> Decision will become the bottleneck.
-
-SDEP exists to ensure:
-
-- decision systems are not locked into execution tools
-- execution remains replaceable infrastructure
-- the boundary between thinking and acting is **explicit and controllable**
 
 ---
 
 
 ## 🔌 Wrapper Ecosystem (External Agents)
 
-Spice supports an open wrapper ecosystem.
+SDEP is the clean boundary. Wrappers make it practical today.
 
-Even if an external agent does not natively support SDEP, it can still be integrated through a wrapper.
+If an external agent does not natively support SDEP, it can still connect through a wrapper:
 
----
+```text
+Spice -> SDEP -> Wrapper -> External Agent
+```
 
-### 1. What is a wrapper?
+The wrapper translates between:
 
-A wrapper is a **protocol bridge** between Spice and external agents.
+- Spice’s structured ExecutionIntent / ExecutionResult
+- the agent’s native interface, such as CLI, JSON, HTTP, SDK, or hosted API
 
-Spice (SDEP) ↔ Wrapper ↔ External Agent
+This lets Spice work with existing execution agents without requiring them to change their internals.
+Integration paths:
 
-- Spice speaks in **ExecutionIntent / ExecutionResult (SDEP)**
-- Agents speak in their own formats (CLI, JSON, HTTP, SDK, etc.)
-- The wrapper translates between the two
+- **Native SDEP agent** -> connect directly
+- **Non-SDEP agent** -> connect through a wrapper
+- **Multiple agents** -> select by capability, context, or configured executor
 
----
-
-### 2. Why wrappers matter
-
-SDEP is a newly launched protocol that connects the **decision layer** with external execution agents; its ecosystem still needs development.
-
-Wrappers make Spice immediately compatible with the existing ecosystem:
-
-- Integrate CLI agents, SDK-based tools, and remote services  
-- Avoid modifying existing agents  
-- Enable gradual adoption of SDEP  
-
----
-
-### 3. Integration model
-
-- **Native SDEP agents** → connect directly  
-- **Non-SDEP agents** → connect via wrapper  
-- **Multiple agents** → route by capability or context
-
-
----
-
-
-
-### 4. Our view
-
-Wrappers exist to make Spice useful today.
-
-They allow us to integrate with existing agents without requiring changes.
-
-But we believe this is a transitional layer.
-
-In the long term, we expect more agents to adopt SDEP natively —  
-enabling a clean, direct connection between decision systems and execution.
-
-> Wrappers make Spice practical.  
-> SDEP is where the real value compounds.
-
-
+Wrappers are a compatibility layer. The long-term protocol boundary is SDEP.
 
 ---
 
@@ -921,92 +821,133 @@ enabling a clean, direct connection between decision systems and execution.
 
 ## 📁 Project Structure
 
-```
-spice/
-├── spice/                     # 🧠 Core decision runtime framework
-│   ├── core/                  #    Runtime loop + state store
-│   ├── protocols/             #    Observation/Decision/Execution contracts
-│   ├── decision/              #    Decision policy primitives
-│   ├── domain/                #    DomainPack abstractions
-│   ├── domain_starter/        #    New-domain scaffold templates
-│   ├── executors/             #    Executor interface + SDEP adapter
-│   ├── llm/                   #    Optional LLM core/adapters/providers
-│   ├── memory/                #    Context/memory components
-│   ├── replay/                #    Replay utilities
-│   ├── shadow/                #    Shadow-run evaluation
-│   ├── evaluation/            #    Eval helpers
-│   ├── entry/                 #    Core CLI/tooling (quickstart/init domain)
-│   └── adapters/              #    External system adapters
-├── tests/                     # ✅ Core test suite
-├── docs/                      # 📚 Architecture + protocol docs (incl. SDEP)
-├── schemas/                   # 📐 Machine-readable SDEP JSON Schemas
-├── examples/                  # 🧪 Runtime, decision, and SDEP examples
-│   ├── decision_hub_demo/     #    Simulation-driven decision demo domain
-│   ├── sdep_agent_demo/       #    Minimal SDEP executor demo
-│   ├── sdep_quickstart/       #    SDEP quickstart for executor authors
-│   ├── sdep_payloads/         #    Example SDEP request/response payloads
-│   └── sdep_wrapper_template/ #    Template for wrapping non-SDEP agents
-├── spice-hermes-bridge/       # 🌉 Reference bridge: WhatsApp/GitHub -> Spice -> SDEP -> Hermes
-├── pyproject.toml             # 📦 spice-runtime package metadata
-├── README.md                  # 📝 Core project overview
-├── LICENSE                    # ⚖️ MIT
-└── .gitignore                 # 🙈 Ignore rules
+```text
+Spice/
+├── spice/                         # Core Spice runtime package
+│   ├── runtime/                   # Shell, routing, approval flow, perception wiring, execution runtime
+│   │   └── tui/                   # Terminal UI surfaces and conversation rendering
+│   ├── decision/                  # Decision policies, profiles, comparison, and general decision models
+│   ├── perception/                # Read-only perception providers and workspace/URL context sources
+│   ├── executors/                 # Executor interfaces and SDEP adapter
+│   ├── llm/                       # LLM clients, providers, composers, routers, simulation helpers
+│   ├── memory/                    # Memory, context summaries, and memory writeback helpers
+│   ├── core/                      # Core protocol loop primitives and state store
+│   ├── protocols/                 # Observation / decision / execution protocol primitives
+│   ├── domain/                    # DomainPack abstractions for custom domains
+│   ├── domain_starter/            # New-domain scaffold templates
+│   ├── replay/                    # Replay utilities
+│   ├── shadow/                    # Shadow-run evaluation utilities
+│   ├── evaluation/                # Evaluation helpers
+│   ├── adapters/                  # External system adapters
+│   └── entry/                     # CLI entrypoints, setup, quickstart, shell commands
+│
+├── tests/                         # Test suite, grouped by subsystem
+│   ├── decision/                  # Decision comparison, profiles, general decision tests
+│   ├── runtime/                   # Shell/runtime/routing/perception/execution/composer tests
+│   ├── llm/                       # LLM provider, router, composer, simulation tests
+│   ├── perception/                # Workspace, URL, OpenChronicle, poll perception tests
+│   ├── executors/                 # Executor and SDEP integration tests
+│   ├── memory/                    # Memory and context tests
+│   ├── protocols/                 # Protocol contract tests
+│   ├── entry/                     # CLI/setup command tests
+│   ├── demos/                     # Demo scenario tests
+│   └── replay/                    # Replay tests
+│
+├── docs/                          # Architecture, decision guidance, SDEP, runtime docs
+├── schemas/                       # Machine-readable protocol schemas
+│   └── sdep/v0.1/                 # SDEP v0.1 JSON Schemas
+├── examples/                      # Demos, SDEP examples, wrapper templates
+│   ├── decision_hub_demo/         # Simulation-driven decision demo domain
+│   ├── incident_commander_demo/   # Incident response decision demo
+│   ├── cli_adapter_demo/          # CLI adapter example
+│   ├── sdep_agent_demo/           # Minimal SDEP executor demo
+│   ├── sdep_quickstart/           # SDEP quickstart for executor authors
+│   ├── sdep_payloads/             # Example SDEP request/response payloads
+│   └── sdep_wrapper_template/     # Template for wrapping non-SDEP agents
+├── spice-hermes-bridge/           # Reference bridge: external signals -> Spice -> SDEP -> Hermes
+├── assets/                        # README/community assets
+├── pyproject.toml                 # spice-runtime package metadata
+├── README.md                      # Project overview
+├── README_zh.md                   # Chinese README
+├── LICENSE                        # MIT
+└── .gitignore                     # Ignore rules
 
 ```
 
---- 
+
+---   
 
 
 ## 🗺️ Roadmap
 
 Spice is an evolving decision-layer system.
 
-We’ve built the core runtime, personal reference app, and SDEP-based execution loop.  
-Next, we focus on expanding capabilities and ecosystem.
+The current focus is building the decision layer above agents: source-backed reasoning before action, explicit trade-offs before commitment, and approval-gated handoff before execution.
 
-PRs are welcome — the system is designed to be modular and extensible.
+
+PRs are welcome. The system is designed to be modular, inspectable, and extensible.
+
 
 ---
 
 ### Current
 
-- [x] Decision runtime (perception → state → decision → reflection)  
-- [x] Integrated quickstart and domain scaffolding 
-- [x] SDEP (Decision → Execution protocol)  
-- [x] Wrapper ecosystem for external agents  
-- [x] End-to-end loop (decision → execution → outcome)  
+- [x] **Interactive decision shell**  
+  Agent-like conversation with folded Decision Cards and audit commands.
+
+- [x] **Decision runtime**  
+  Perception -> state -> simulation -> decision -> optional approval -> execution -> reflection.
+
+- [x] **Source-backed perception**  
+  Read-only workspace perception, URL perception, `/sources`, citation checks, and evidence-aware responses.
+
+- [x] **LLM-assisted decision flow**  
+  Semantic routing, candidate expansion, simulation metadata, response composition, and follow-up handling.
+
+- [x] **Approval-gated execution**  
+  Execution is separated from decision and only crosses the boundary through explicit approval checkpoints.
+
+- [x] **SDEP v0.1**  
+  A protocol boundary for connecting Spice decisions to external execution agents.
 
 ---
 
 ### Next
 
-- [ ] **Richer decision modeling**  
-  Better simulation, trade-off analysis, and multi-step reasoning  
+- [ ] **Stronger model compatibility**  
+  Better handling for different LLM providers, especially strict JSON simulation and composer fallback behavior.
 
-- [ ] **Stronger memory layer**  
-  Cleaner WorldState governance, context slicing, and decision-relevant state updates
+- [ ] **Deeper read-only perception**  
+  Better GitHub repo inspection, richer URL understanding, improved repo maps, and source-grounded code analysis.
 
-- [ ] **More execution integrations**  
-  Expand agent ecosystem (CLI, APIs, tools, services)  
+- [ ] **More executor integrations**  
+  Improve Codex, Claude Code, Hermes, and SDEP-compatible executor handoff.
 
-- [ ] **Multi-step decision workflows**  
-  From single decisions → structured plans and execution chains  
+- [ ] **Better delegated perception**  
+  Let external agents perform read-only investigations while Spice keeps source tracking, consent, and decision ownership.
 
-- [ ] **Better observability**  
-  Inspect decisions, execution traces, and state transitions  
+- [ ] **Decision evolution**  
+  Improve how user follow-ups, approvals, outcomes, and memory updates shape future decisions.
+
+- [ ] **Observability and replay**  
+  Make decisions, sources, approvals, execution traces, and state transitions easier to inspect and replay.
+
 
 ---
 
 ### Longer-term
 
-- [ ] **Domain expansion**  
-  Apply Spice to new domains beyond personal (software, ops, research)
-
 - [ ] **Native SDEP ecosystem**  
-  More agents supporting SDEP directly (less reliance on wrappers)
+  More agents supporting SDEP directly, with less reliance on wrappers.
+
+- [ ] **Multi-step decision workflows**  
+  Move from single decisions to structured plans, branches, and execution chains.
 
 - [ ] **Persistent decision systems**  
-  Systems that continuously learn and evolve over time
+  Systems that continuously maintain context, learn from outcomes, and improve decision quality over time.
+
+- [ ] **Domain expansion**  
+  Apply Spice to software, operations, research, business strategy, and personal decision systems.
 
 
 ---
@@ -1014,11 +955,20 @@ PRs are welcome — the system is designed to be modular and extensible.
 
 ## 🌌 Vision
 
-We believe the future of AI is not just execution —  
-but better ways to think and decide.
+We believe the future of AI is not only about better execution.
+
+It is also about better decisions.
+
+Execution agents are becoming faster, cheaper, and more capable.
+
+But before action, there is still a harder question:
+
+> What should be done next, and why?
+
 
 Spice is an attempt to build a new layer in the AI stack:  
-a **decision layer** above agents.
+
+> a **decision layer** above agents.
 
 ---
 
@@ -1031,7 +981,7 @@ A system that:
 - understands your world  
 - maintains your state  
 - helps you think through decisions  
-- and takes action when needed  
+- and hands off action when needed
 
 ---
 
@@ -1041,7 +991,6 @@ Not just a chatbot.
 But a **decision brain**  
 that evolves with context, outcomes, and goals over time.
 
-We've recently been considering the commercialization path for Spice, and to achieve our vision, we'll be moving towards a **General AI Brain**. We're currently preparing a very compelling demo, so stay tuned!
 
 ---
 
