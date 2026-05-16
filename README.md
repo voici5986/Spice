@@ -623,29 +623,28 @@ spice shell
 
 ## ✨ Features
 
-Spice transforms your world into a structured decision system.
+Spice turns messy context into a structured, auditable decision loop.
 
 It enables a new way to think, decide, and act:
 
 
-
 1. **Perception**  
-   Understand your world and extract meaningful signals  
+   Read decision-relevant context from user input, local workspace files, URLs, external signals, or delegated read-only investigations.
 
 2. **State Modeling**  
-   Turn it into a structured decision model
+   Maintain local state, session history, memory summaries, and decision-relevant context.
 
 3. **Simulation**  
-   Explore possible futures before taking action  
+   Compare candidate futures before action: expected outcome, downside, success signal, and confidence.
 
 4. **Decision**  
-   Compare trade-offs and then give you decision-making assistance. 
+   Rank options, explain why one wins, show why others were rejected, and keep the full Decision Card available for audit.
 
 5. **Execution (optional)**  
-  Delegate actions to external agents (e.g. Claude Code, Codex)  
+   Send approved actions across an explicit execution boundary to external executors such as Codex, Claude Code, Hermes, or SDEP-             compatible agents.
 
 6. **Reflection**  
-   Learn from outcomes and continuously improve decisions
+   Learn from follow-ups, approvals, execution outcomes, and memory writeback over time.
 
 
 ---
