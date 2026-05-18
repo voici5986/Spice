@@ -558,6 +558,83 @@ spice setup
 spice shell
 ```
 
+---
+
+## 🧵 Sessions
+
+Spice 会把本地决策会话保存在 `.spice/sessions/` 下。
+
+一个 session 不只是聊天记录。它是一个本地的决策循环窗口，用来关联：
+
+- 对话轮次
+- 决策运行记录
+- Decision Cards
+- 感知来源
+- pending approvals（如果存在）
+- execution outcomes（如果存在）
+- memory summaries
+
+这让 Spice 可以从同一个决策上下文继续，而不是盲目地把完整原始聊天记录再次发送给模型。
+
+
+默认 session 是：
+
+```text
+session.default
+```
+
+使用当前 active session 启动交互式 shell：
+
+```bash
+spice shell
+```
+
+启动一个新的具名 session：
+
+```bash
+spice shell --session-id session.project-review
+```
+
+在指定 session 内运行一次决策：
+
+```bash
+spice run --once "Read this repo and suggest the next step" --session-id session.project-review
+```
+
+查看 sessions：
+
+```bash
+spice session list
+spice session current
+spice session show session.project-review
+spice session timeline session.project-review
+```
+
+直接恢复某个 session 并进入 shell：
+
+```bash
+spice session resume session.project-review --start
+```
+
+切换当前 workspace 的 active session：
+
+```bash
+spice session switch session.project-review
+```
+
+在 shell 内可以使用：
+
+```text
+/session    show current session summary
+/timeline   show the current session timeline
+/stats      show local session stats
+```
+
+恢复 session 不会重新播放旧 run，也不会自动执行任何操作。它只是重新打开同一个本地决策上下文，用于处理下一次用户意图。
+
+
+
+Sessions 是 Spice 保持决策连续性的方式：下一次回答可以引用之前的决策、已选候选方案、sources、approvals 和 outcomes，同时仍然保持明确的执行边界。
 
 
 
