@@ -620,6 +620,85 @@ spice shell
 
 ---
 
+## 🧵 Sessions
+
+Spice keeps local decision sessions under `.spice/sessions/`.
+
+A session is not just a chat transcript. It is a local decision-loop window that links:
+
+- conversation turns
+- decision runs
+- Decision Cards
+- perception sources
+- pending approvals
+- execution outcomes
+- memory summaries
+
+
+This lets Spice continue from the same decision context without blindly sending the full chat history back to the model.
+
+The default session is:
+
+```text
+session.default
+```
+
+Start the interactive shell with the active session:
+
+```bash
+spice shell
+```
+
+Start a new named session:
+
+```bash
+spice shell --session-id session.project-review
+```
+
+Run one decision inside a specific session:
+
+```bash
+spice run --once "Read this repo and suggest the next step" --session-id session.project-review
+```
+
+Inspect sessions:
+
+```bash
+spice session list
+spice session current
+spice session show session.project-review
+spice session timeline session.project-review
+```
+
+Resume a session directly into the shell:
+
+```bash
+spice session resume session.project-review --start
+```
+
+Switch the workspace active session:
+
+```bash
+spice session switch session.project-review
+```
+
+Inside the shell:
+
+```text
+/session    show current session summary
+/timeline   show the current session timeline
+/stats      show local session stats
+```
+
+Resuming a session does not replay old runs or automatically execute anything. It reopens the same local decision context for the next user intent.
+
+
+
+Sessions are how Spice keeps decision continuity: the next answer can reference previous decisions, selected candidates, sources, approvals, and outcomes while keeping the execution boundary explicit.
+
+
+---
+
 
 
 ## ✨ Features
