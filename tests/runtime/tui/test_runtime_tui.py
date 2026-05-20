@@ -1900,7 +1900,37 @@ class RuntimeTUITests(unittest.TestCase):
             ]
             self.assertEqual(after_frame["selected_candidate_id"], visible_b["candidate_id"])
             self.assertEqual(after_frame["selected"]["label"], "B")
-            self.assertIn("Selected B", output.getvalue())
+            text = output.getvalue()
+            self.assertIn("Selected B", text)
+            self.assertIn("advisory-only", text)
+            self.assertIn("/act <specific executable task>", text)
+            self.assertNotIn("execute selected", text)
+
+    def test_tui_shell_continuation_selects_executable_option_shows_execute_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            setup_workspace(project_root=tmp_dir)
+            output = io.StringIO()
+            shell = self._plain_output_shell(tmp_dir, output)
+            _install_execution_ready_frame(shell)
+
+            with patch(
+                "spice.runtime.tui.shell.route_semantic_input_from_runtime_config",
+                return_value=SemanticRoute(
+                    route="follow_up",
+                    action="choose_option",
+                    is_continuation=True,
+                    candidate_id="candidate.b",
+                    label="B",
+                    text="choose B",
+                    source="llm",
+                ),
+            ):
+                self.assertFalse(shell.handle_line("choose B"))
+
+            text = output.getvalue()
+            self.assertIn("Selected B", text)
+            self.assertIn("execute selected", text)
+            self.assertNotIn("advisory-only", text)
 
     def test_tui_shell_continuation_execute_selected_blocks_advisory_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -2421,6 +2451,28 @@ class RuntimeTUITests(unittest.TestCase):
             run_intent.assert_not_called()
             self.assertIn("advisory-only", output.getvalue())
 
+    def test_tui_execute_command_does_not_create_approval_for_advisory_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            setup_workspace(project_root=tmp_dir)
+            output = io.StringIO()
+            shell = self._plain_output_shell(tmp_dir, output)
+
+            shell.handle_line(
+                "Compare these 3 next steps for Spice: add LLM retry, polish Decision Card, "
+                "add JSON output. Which should we do first?"
+            )
+            active_frame = shell._active_decision_frame()
+            self.assertFalse(active_frame.get("approval_id"))
+            self.assertEqual(shell._store().list_record_ids("approvals"), [])
+
+            self.assertFalse(shell.handle_line("/execute"))
+
+            self.assertEqual(shell._store().list_record_ids("approvals"), [])
+            self.assertIsNone(shell.pending_decision)
+            text = output.getvalue()
+            self.assertIn("not executable", text)
+            self.assertIn("advisory-only", text)
+
     def test_tui_shell_natural_execution_opens_pending_approval_for_executable_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             setup_workspace(project_root=tmp_dir)
@@ -2869,6 +2921,29 @@ class RuntimeTUITests(unittest.TestCase):
             self.assertTrue(turn["metadata"]["execution_response"]["failed"])
             self.assertEqual(turn["metadata"]["execution_result"]["execution_status"], "failed")
             self.assertIn("timed out", turn["metadata"]["execution_result"]["error"])
+
+    def test_tui_execute_error_hides_approval_sdep_mismatch_from_default_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            setup_workspace(project_root=tmp_dir)
+            output = io.StringIO()
+            shell = self._plain_output_shell(tmp_dir, output)
+            raw_error = "Approved approval does not match the SDEP request approval_id."
+
+            with patch("spice.runtime.tui.shell.execute_dry_run_approval", side_effect=ValueError(raw_error)):
+                self.assertFalse(shell.handle_line("/execute approval.test"))
+
+            text = output.getvalue()
+            self.assertIn("current selection is not an executable task", text)
+            self.assertIn("did not call the executor", text)
+            self.assertNotIn("Approved approval", text)
+            self.assertNotIn("SDEP request", text)
+            self.assertNotIn("mismatch", text.lower())
+            session = shell._store().load_session(shell.result.session_id)
+            turn = shell._store().load_conversation_turn(session["conversation_turn_ids"][-1])
+            execution_result = turn["metadata"]["execution_result"]
+            self.assertEqual(execution_result["failure_kind"], "approval_request_mismatch")
+            self.assertEqual(execution_result["technical_error"], raw_error)
+            self.assertIn("current selection is not an executable task", execution_result["error"])
 
     def test_tui_handles_pasted_multiline_commands_separately(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

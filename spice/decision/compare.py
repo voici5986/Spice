@@ -96,7 +96,9 @@ def render_compare_text(
         if candidate["enabled_reason"]:
             lines.append(f"   available because: {candidate['enabled_reason']}")
         if candidate.get("expected_result"):
-            lines.append(f"   expected result: {candidate['expected_result']}")
+            lines.append(
+                f"   expected outcome if chosen: {candidate['expected_result']}"
+            )
         if candidate.get("executor_task"):
             lines.append(f"   executor task: {candidate['executor_task']}")
         affordance = candidate.get("execution_affordance") or {}
@@ -326,12 +328,12 @@ def _render_execution_affordance(affordance: Mapping[str, Any]) -> str:
         reason = str(affordance.get("blocked_reason") or "")
         if "execution_intent" in reason or "advisory" in reason.lower():
             return (
-                "advisory only; no executor handoff requested; "
-                f"executor={executor_id}; approval not required"
+                "not executable; advisory only; no executor handoff requested; "
+                "approval not required"
                 f"{_capability_detail_suffix(affordance, advisory=True)}"
             )
         return (
-            f"handoff unavailable ({reason or 'not approval eligible'}); "
+            f"not executable; no executor handoff available ({reason or 'not approval eligible'}); "
             f"executor={executor_id}; permission={configured}->{required}; approval not available"
             f"{_capability_detail_suffix(affordance, missing=True)}"
         )
@@ -339,7 +341,7 @@ def _render_execution_affordance(affordance: Mapping[str, Any]) -> str:
     if affordance.get("blocked"):
         reason = affordance.get("blocked_reason") or "blocked"
         return (
-            f"handoff blocked ({reason}); executor={executor_id}; "
+            f"not executable yet; executor handoff blocked ({reason}); executor={executor_id}; "
             f"permission={configured}->{required}; {approval_text}"
             f"{_capability_detail_suffix(affordance, missing=True)}"
         )

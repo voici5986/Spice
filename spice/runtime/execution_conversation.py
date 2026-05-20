@@ -49,6 +49,15 @@ def open_execution_approval_from_frame(
     selected_id = str(selected.get("candidate_id") or frame.get("selected_candidate_id") or "").strip()
     if not selected_id:
         raise ValueError("Active Decision Card has no selected candidate to execute.")
+    eligibility = _execution_approval_eligibility(selected)
+    if not eligibility["eligible"]:
+        raise ValueError(
+            _execution_approval_block_message(
+                selected=selected,
+                reason=str(eligibility["reason"] or ""),
+                language=detect_display_language(user_input),
+            )
+        )
 
     existing_approval_id = str(frame.get("approval_id") or "").strip()
     approval = (
@@ -228,6 +237,182 @@ def _build_pending_approval(
             },
             "execution_affordance": affordance,
         },
+    )
+
+
+def _execution_approval_eligibility(selected: Mapping[str, Any]) -> dict[str, Any]:
+    affordance = _mapping(selected.get("execution_affordance"))
+    if not affordance:
+        return {
+            "eligible": False,
+            "reason": "selected candidate has no runtime execution affordance",
+        }
+    approval = _mapping(affordance.get("approval"))
+    hard_block_reason = _candidate_hard_block_reason(selected, affordance)
+    if hard_block_reason:
+        return {
+            "eligible": False,
+            "reason": hard_block_reason,
+        }
+    if "candidate_execution_requested" in affordance and not bool(affordance.get("candidate_execution_requested")):
+        return {
+            "eligible": False,
+            "reason": "selected candidate is advisory-only; no executor handoff was requested",
+        }
+    if not bool(affordance.get("candidate_executable")):
+        return {
+            "eligible": False,
+            "reason": str(affordance.get("blocked_reason") or "selected candidate is not executable"),
+        }
+    if not bool(affordance.get("executor_available")):
+        executor = _mapping(affordance.get("executor"))
+        return {
+            "eligible": False,
+            "reason": str(executor.get("detail") or "configured executor is not available"),
+        }
+    if not bool(affordance.get("executable")):
+        return {
+            "eligible": False,
+            "reason": str(affordance.get("blocked_reason") or "selected candidate cannot cross the execution boundary"),
+        }
+    if not bool(approval.get("required")):
+        return {
+            "eligible": False,
+            "reason": "selected candidate does not require execution approval",
+        }
+    if not bool(approval.get("eligible_for_approval")):
+        return {
+            "eligible": False,
+            "reason": str(approval.get("reason") or "selected candidate is not eligible for approval"),
+        }
+    return {"eligible": True, "reason": ""}
+
+
+def _candidate_hard_block_reason(
+    selected: Mapping[str, Any],
+    affordance: Mapping[str, Any],
+) -> str:
+    text = _candidate_boundary_text(selected)
+    if _is_noop_or_defer_candidate(text):
+        return (
+            "selected candidate is no-op/defer/record-only; it records or postpones the decision "
+            "and cannot be sent to an executor"
+        )
+    if _is_read_only_candidate(selected, affordance, text):
+        return (
+            "selected candidate is read-only; perception, inspection, and advisory reads "
+            "do not cross the execution approval boundary"
+        )
+    return ""
+
+
+def _candidate_boundary_text(selected: Mapping[str, Any]) -> str:
+    parts: list[str] = []
+    for key in (
+        "action",
+        "intent",
+        "title",
+        "recommended_action",
+        "expected_result",
+        "executor_task",
+        "required_capability",
+    ):
+        value = selected.get(key)
+        if value:
+            parts.append(str(value))
+    for item in _list(selected.get("why_now")):
+        if item:
+            parts.append(str(item))
+    return "\n".join(parts).lower()
+
+
+def _is_noop_or_defer_candidate(text: str) -> bool:
+    patterns = (
+        "time.defer",
+        "state.record",
+        "record-only",
+        "record only",
+        "no-op",
+        "noop",
+        "defer",
+        "later",
+        "skip",
+        "postpone",
+        "暂缓",
+        "稍后",
+        "仅记录",
+        "只记录",
+        "记录状态",
+        "不执行",
+        "不要现在发起",
+        "先不要现在发起",
+    )
+    return any(pattern in text for pattern in patterns)
+
+
+def _is_read_only_candidate(
+    selected: Mapping[str, Any],
+    affordance: Mapping[str, Any],
+    text: str,
+) -> bool:
+    read_only_terms = (
+        "read-only",
+        "read_only",
+        "read_file",
+        "repo_map",
+        "search",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "read_package_metadata",
+        "read_test_structure",
+        "read_python_symbol",
+        "workspace perception",
+        "inspect current implementation",
+        "读取",
+        "查看当前实现",
+        "读 repo",
+    )
+    state_changing_terms = (
+        "write_file",
+        "patch",
+        "edit",
+        "delete",
+        "move",
+        "install",
+        "terminal_command",
+        "run test",
+        "pytest",
+        "修改",
+        "写入",
+        "删除",
+        "安装",
+        "执行测试",
+    )
+    return any(term in text for term in read_only_terms) and not any(term in text for term in state_changing_terms)
+
+
+def _execution_approval_block_message(
+    *,
+    selected: Mapping[str, Any],
+    reason: str,
+    language: str,
+) -> str:
+    title = _candidate_title(selected)
+    if language == "zh":
+        return "\n".join(
+            [
+                f"当前选择不是可执行任务，不能生成 execution approval：{title}",
+                f"原因：{reason or 'selected candidate is not executable'}",
+                "Next: refine 当前决策，选择一个可执行候选，或使用 `/act <具体可执行任务>` 创建新的 approval-gated handoff。",
+            ]
+        )
+    return "\n".join(
+        [
+            f"Selected candidate is not executable, so I cannot create execution approval: {title}",
+            f"Reason: {reason or 'selected candidate is not executable'}",
+            "Next: refine the decision, choose an executable candidate, or use `/act <specific executable task>` to create a new approval-gated handoff.",
+        ]
     )
 
 

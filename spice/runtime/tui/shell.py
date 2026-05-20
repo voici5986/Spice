@@ -95,9 +95,11 @@ from spice.runtime.resource_extractor import extract_resources
 from spice.runtime.run_once import RunOnceResult, run_once
 from spice.runtime.refine import RefineResult, refine_decision
 from spice.runtime.execution_response_composer import (
+    classify_execution_error,
     compose_execution_response_from_runtime_config,
     execution_response_facts,
     render_execution_response_fallback,
+    user_facing_execution_error,
 )
 from spice.runtime.response_composer import compose_decision_response_from_runtime_config
 from spice.runtime.evidence_requirement import detect_evidence_requirement
@@ -1128,6 +1130,8 @@ class SpiceTUIShell:
                         "memory_written": bool(facts.get("memory_written")),
                         "state_updated": bool(facts.get("state_updated")),
                         "error": str(facts.get("error") or ""),
+                        "technical_error": str(facts.get("technical_error") or ""),
+                        "failure_kind": str(facts.get("failure_kind") or ""),
                     },
                 },
             )
@@ -2828,7 +2832,7 @@ class SpiceTUIShell:
                 [
                     f"Selected {selected.get('label') or resolution.label}: {title}",
                     f"candidate_id: {selected.get('candidate_id') or resolution.candidate_id}",
-                    "Next: type `execute selected`, `refine that ...`, `details`, or a new intent.",
+                    _selected_candidate_next_action_text(selected, updated),
                 ]
             )
         )
@@ -3458,6 +3462,144 @@ def _context_selected_summary(frame: dict[str, Any]) -> str:
     candidate_id = str(selected.get("candidate_id") or frame.get("selected_candidate_id") or "").strip()
     parts = [part for part in [label, _shorten(title, 80), candidate_id] if part]
     return " | ".join(parts)
+
+
+def _selected_candidate_next_action_text(
+    selected: Mapping[str, Any],
+    frame: Mapping[str, Any],
+) -> str:
+    kind = _selected_candidate_next_action_kind(selected)
+    if kind == "executable":
+        return "Next: type `execute selected`, `refine that ...`, `details`, or a new intent."
+    if kind == "read_only":
+        reason = "This option is read-only and has no executor handoff."
+    elif kind == "noop":
+        reason = "This option records, skips, or postpones work; it has no executor handoff."
+    elif kind == "blocked":
+        reason = "This option is not ready for an executor handoff."
+    else:
+        reason = "This option is advisory-only and has no executor handoff."
+    candidate_id = str(selected.get("candidate_id") or frame.get("selected_candidate_id") or "").strip()
+    suffix = f"\ncandidate_id: {candidate_id}" if candidate_id and kind == "blocked" else ""
+    return (
+        f"{reason}{suffix}\n"
+        "Next: type `refine that ...`, `details`, choose another option, "
+        "or `/act <specific executable task>`."
+    )
+
+
+def _selected_candidate_next_action_kind(selected: Mapping[str, Any]) -> str:
+    text = _selected_candidate_boundary_text(selected)
+    if _candidate_text_is_noop_or_defer(text):
+        return "noop"
+    if _candidate_text_is_read_only(text):
+        return "read_only"
+
+    affordance = _mapping(selected.get("execution_affordance"))
+    if not affordance:
+        return "advisory"
+    if (
+        "candidate_execution_requested" in affordance
+        and not bool(affordance.get("candidate_execution_requested"))
+    ):
+        return "advisory"
+    approval = _mapping(affordance.get("approval"))
+    if bool(
+        affordance.get("candidate_executable")
+        and affordance.get("executor_available")
+        and affordance.get("executable")
+        and approval.get("required")
+        and approval.get("eligible_for_approval")
+    ):
+        return "executable"
+    if bool(affordance.get("candidate_execution_requested") or affordance.get("blocked")):
+        return "blocked"
+    return "advisory"
+
+
+def _selected_candidate_boundary_text(selected: Mapping[str, Any]) -> str:
+    parts: list[str] = []
+    for key in (
+        "action",
+        "action_type",
+        "intent",
+        "title",
+        "recommended_action",
+        "expected_result",
+        "executor_task",
+        "required_capability",
+    ):
+        value = selected.get(key)
+        if value:
+            parts.append(str(value))
+    for item in _list(selected.get("why_now")):
+        if item:
+            parts.append(str(item))
+    return "\n".join(parts).lower()
+
+
+def _candidate_text_is_noop_or_defer(text: str) -> bool:
+    patterns = (
+        "time.defer",
+        "state.record",
+        "record-only",
+        "record only",
+        "no-op",
+        "noop",
+        "defer",
+        "later",
+        "skip",
+        "postpone",
+        "暂缓",
+        "稍后",
+        "仅记录",
+        "只记录",
+        "记录状态",
+        "不执行",
+        "不要现在发起",
+        "先不要现在发起",
+    )
+    return any(pattern in text for pattern in patterns)
+
+
+def _candidate_text_is_read_only(text: str) -> bool:
+    read_only_terms = (
+        "read-only",
+        "read_only",
+        "read_file",
+        "repo_map",
+        "search",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "read_package_metadata",
+        "read_test_structure",
+        "read_python_symbol",
+        "workspace perception",
+        "inspect current implementation",
+        "读取",
+        "查看当前实现",
+        "读 repo",
+    )
+    state_changing_terms = (
+        "write_file",
+        "patch",
+        "edit",
+        "delete",
+        "move",
+        "install",
+        "terminal_command",
+        "run test",
+        "pytest",
+        "修改",
+        "写入",
+        "删除",
+        "安装",
+        "执行测试",
+    )
+    return any(term in text for term in read_only_terms) and not any(
+        term in text for term in state_changing_terms
+    )
 
 
 def _executor_context_summary(payload: dict[str, Any]) -> str:
@@ -4099,15 +4241,31 @@ def _execution_error_artifact(
     error: Exception,
     permission_mode: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    technical_error = str(error)
+    failure_kind = classify_execution_error(technical_error)
+    user_error = user_facing_execution_error(technical_error)
+    artifact: dict[str, Any] = {
         "execution_status": "failed",
         "approval_id": approval_id,
         "executor_provider": executor_provider or "executor",
         "task_status": "failed",
-        "error": str(error),
+        "error": user_error,
+        "technical_error": technical_error,
+        "failure_kind": failure_kind,
         "permission": {"mode": permission_mode or ""},
         "next_actions": ["details", "retry", "refine"],
     }
+    if failure_kind == "approval_request_mismatch":
+        artifact.update(
+            {
+                "executor_called": False,
+                "real_executor_called": False,
+                "sdep_request_sent": False,
+                "executed": False,
+                "next_actions": ["details", "refine", "choose executable task"],
+            }
+        )
+    return artifact
 
 
 def _conversation_next_steps_text(*, has_approval: bool = False) -> str:

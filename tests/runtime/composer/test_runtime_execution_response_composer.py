@@ -484,6 +484,50 @@ class RuntimeExecutionResponseComposerTests(unittest.TestCase):
         self.assertIn("Permission denied", text)
         self.assertIn("retry", text)
 
+    def test_deterministic_fallback_hides_technical_approval_request_mismatch(self) -> None:
+        raw_error = "Approved approval does not match the SDEP request approval_id."
+        facts = execution_response_facts(
+            error_artifact={
+                "execution_status": "failed",
+                "executor_provider": "codex",
+                "task_status": "failed",
+                "error": raw_error,
+            }
+        )
+
+        text = render_execution_response_fallback(facts)
+
+        self.assertEqual(facts["failure_kind"], "approval_request_mismatch")
+        self.assertEqual(facts["technical_error"], raw_error)
+        self.assertIn("current selection is not an executable task", text)
+        self.assertIn("did not call the executor", text)
+        self.assertNotIn("Approved approval", text)
+        self.assertNotIn("SDEP request", text)
+        self.assertNotIn("mismatch", text.lower())
+
+    def test_validator_rejects_technical_mismatch_copy(self) -> None:
+        raw_error = "Approved approval does not match the SDEP request approval_id."
+        client = _FakeClient(
+            json.dumps({"response": "Approved approval does not match the SDEP request approval_id."})
+        )
+
+        result = compose_execution_response_with_llm(
+            client=client,  # type: ignore[arg-type]
+            error_artifact={
+                "execution_status": "failed",
+                "executor_provider": "codex",
+                "task_status": "failed",
+                "error": raw_error,
+            },
+            model_provider="fake",
+            model_id="fake-model",
+        )
+
+        self.assertEqual(result.status, "fallback")
+        self.assertIn("technical approval/SDEP mismatch", result.error)
+        self.assertIn("current selection is not an executable task", result.response_text)
+        self.assertNotIn("Approved approval", result.response_text)
+
 
 def _execution_artifact() -> dict[str, object]:
     return {

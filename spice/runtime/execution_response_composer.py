@@ -51,6 +51,10 @@ _FAILURE_CLAIMS = (
     "error",
     "did not complete",
     "didn't complete",
+    "did not run",
+    "didn't run",
+    "did not call",
+    "didn't call",
     "could not complete",
     "couldn't complete",
     "timed out",
@@ -61,6 +65,10 @@ _FAILURE_CLAIMS = (
     "报错",
     "没有完成",
     "未完成",
+    "没有执行",
+    "未执行",
+    "没有调用",
+    "未调用",
     "被阻塞",
     "权限不足",
 )
@@ -173,8 +181,44 @@ _EXECUTOR_ALIASES = {
     "sdep_subprocess": {"sdep subprocess", "sdep"},
 }
 
+_TECHNICAL_MISMATCH_MARKERS = (
+    "approved approval does not match",
+    "approval does not match the sdep request",
+    "sdep request approval_id",
+    "sdep request candidate_id",
+    "sdep request decision_id",
+    "sdep response attribution mismatch",
+    "sdep request missing required attribution",
+)
+
 
 ExecutionResponseComposeResult = ComposerResult
+
+
+def classify_execution_error(error_text: str) -> str:
+    lower = str(error_text or "").strip().lower()
+    if not lower:
+        return ""
+    if "approved approval does not match" in lower:
+        return "approval_request_mismatch"
+    if (
+        "sdep response attribution mismatch" in lower
+        or "sdep request missing required attribution" in lower
+    ):
+        return "executor_result_attribution_mismatch"
+    return ""
+
+
+def user_facing_execution_error(error_text: str) -> str:
+    kind = classify_execution_error(error_text)
+    if kind == "approval_request_mismatch":
+        return "The current selection is not an executable task, so I did not call the executor."
+    if kind == "executor_result_attribution_mismatch":
+        return (
+            "The executor result could not be safely verified, so Spice did not record it "
+            "as completed. Use /details or /json for the technical trace."
+        )
+    return str(error_text or "").strip()
 
 
 def compose_execution_response_from_runtime_config(
@@ -416,6 +460,8 @@ def execution_response_facts(
         "dry_run": bool(artifact.get("dry_run")),
         "real_executor_called": bool(artifact.get("real_executor_called")),
         "error": _shorten(_error_summary(error, artifact), 500),
+        "technical_error": _shorten(_technical_error_summary(error, artifact), 500),
+        "failure_kind": _failure_kind(error, artifact),
         "next_actions": _execution_next_actions(artifact, error),
         "decision_context": compact_composer_context(context_payload),
     }
@@ -429,6 +475,26 @@ def render_execution_response_fallback(facts: Mapping[str, Any]) -> str:
     approval_id = str(facts.get("approval_id") or "")
     summary = str(facts.get("executor_summary") or facts.get("error") or "").strip()
     lines: list[str] = []
+    if str(facts.get("failure_kind") or "") == "approval_request_mismatch":
+        lines.extend(
+            [
+                "This execution did not run.",
+                "",
+                summary
+                or "The current selection is not an executable task, so I did not call the executor.",
+            ]
+        )
+        if approval_id:
+            lines.append(f"approval: {approval_id}")
+        lines.extend(
+            [
+                "",
+                "Use /details or /json if you need the technical trace.",
+                "",
+                "Next: details, refine, or choose an executable task.",
+            ]
+        )
+        return "\n".join(lines)
     if status == "completed":
         lines.append(f"{executor} finished the handoff.")
     elif status == "failed":
@@ -500,6 +566,7 @@ def _slim_execution_prompt_facts(facts: Mapping[str, Any]) -> dict[str, Any]:
             "state_updated": bool(facts.get("state_updated")),
             "dry_run": bool(facts.get("dry_run")),
             "real_executor_called": bool(facts.get("real_executor_called")),
+            "failure_kind": str(facts.get("failure_kind") or ""),
         },
         "execution_affordance": {
             "permission": _mapping(facts.get("permission")),
@@ -571,11 +638,15 @@ def _validate_composed_response(
     task_status = str(facts.get("task_status") or "").strip().lower()
     success_allowed = execution_status == "completed" or task_status in {"success", "completed", "ok"}
     failed = execution_status == "failed" or task_status in {"failed", "error", "blocked", "cancelled", "canceled"}
+    failure_kind = str(facts.get("failure_kind") or "")
 
     if not success_allowed and _contains_claim(lower, _SUCCESS_CLAIMS):
         raise ValueError("execution response composer contradicted execution status with a success claim")
     if success_allowed and _contains_claim(lower, _FAILURE_CLAIMS):
         raise ValueError("execution response composer contradicted execution status with a failure claim")
+    if failure_kind in {"approval_request_mismatch", "executor_result_attribution_mismatch"}:
+        if _contains_technical_mismatch_detail(lower):
+            raise ValueError("execution response composer exposed technical approval/SDEP mismatch details")
     if failed and not (_contains_claim(lower, _FAILURE_CLAIMS) or _mentions_error_detail(lower, facts)):
         raise ValueError("execution response composer hid a failed execution result")
 
@@ -634,6 +705,10 @@ def _contains_claim(text_lower: str, claims: tuple[str, ...]) -> bool:
                 return True
             start = text_lower.find(claim_lower, start + len(claim_lower))
     return False
+
+
+def _contains_technical_mismatch_detail(text_lower: str) -> bool:
+    return any(marker in text_lower for marker in _TECHNICAL_MISMATCH_MARKERS)
 
 
 def _claims_memory_write(text_lower: str) -> bool:
@@ -824,6 +899,26 @@ def _memory_written(memory_writeback: Mapping[str, Any]) -> bool:
 
 def _error_summary(error: Mapping[str, Any], artifact: Mapping[str, Any]) -> str:
     for payload in (error, artifact):
+        text = str(payload.get("user_facing_error") or "").strip()
+        if text:
+            return text
+    for payload in (error, artifact):
+        for key in ("error", "stderr", "message", "reason"):
+            text = str(payload.get(key) or "").strip()
+            if text:
+                return user_facing_execution_error(text)
+    outcome_record = _mapping(artifact.get("outcome_record"))
+    metadata = _mapping(outcome_record.get("metadata"))
+    output = _mapping(metadata.get("output"))
+    return user_facing_execution_error(str(output.get("stderr") or "").strip())
+
+
+def _technical_error_summary(error: Mapping[str, Any], artifact: Mapping[str, Any]) -> str:
+    for payload in (error, artifact):
+        text = str(payload.get("technical_error") or "").strip()
+        if text:
+            return text
+    for payload in (error, artifact):
         for key in ("error", "stderr", "message", "reason"):
             text = str(payload.get(key) or "").strip()
             if text:
@@ -832,6 +927,14 @@ def _error_summary(error: Mapping[str, Any], artifact: Mapping[str, Any]) -> str
     metadata = _mapping(outcome_record.get("metadata"))
     output = _mapping(metadata.get("output"))
     return str(output.get("stderr") or "").strip()
+
+
+def _failure_kind(error: Mapping[str, Any], artifact: Mapping[str, Any]) -> str:
+    for payload in (error, artifact):
+        text = str(payload.get("failure_kind") or "").strip()
+        if text:
+            return text
+    return classify_execution_error(_technical_error_summary(error, artifact))
 
 
 def _execution_next_actions(artifact: Mapping[str, Any], error: Mapping[str, Any]) -> list[str]:

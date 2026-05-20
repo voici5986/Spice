@@ -237,11 +237,13 @@ class DecisionCompareTests(unittest.TestCase):
         )
 
         output = render_compare_text(payload, use_bars=False)
+        rich_output = render_compare_rich(payload, use_bars=False)
 
         self.assertIn("Fix the failing test before the meeting", output)
         self.assertIn("recommendation: Ask Codex to inspect the failure", output)
         self.assertIn("why now:", output)
-        self.assertIn("expected result: The focused test passes.", output)
+        self.assertIn("expected outcome if chosen: The focused test passes.", output)
+        self.assertIn("expected outcome if chosen:", rich_output)
         self.assertIn("executor task: Fix the failing test", output)
         self.assertIn("internal action: intent.execute", output)
 
@@ -263,10 +265,10 @@ class DecisionCompareTests(unittest.TestCase):
         text_output = render_compare_text(payload, use_bars=False)
         rich_output = render_compare_rich(payload, use_bars=False)
 
-        self.assertIn("advisory only; no executor handoff requested", text_output)
+        self.assertIn("not executable; advisory only; no executor handoff requested", text_output)
         self.assertIn("approval not required", text_output)
         self.assertNotIn("execution: blocked", text_output)
-        self.assertIn("advisory only; no executor handoff requested", rich_output)
+        self.assertIn("not executable; advisory only; no executor handoff requested", rich_output)
 
     def test_compare_text_and_rich_render_executable_execution_affordance(self) -> None:
         payload = _execution_affordance_payload(
